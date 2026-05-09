@@ -1,0 +1,107 @@
+# =========================
+# GLOBAL
+# =========================
+.DS_Store
+*.pem
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# =========================
+# FRONTEND (Next.js)
+# =========================
+frontend/node_modules/
+frontend/.pnp
+frontend/.pnp.*
+frontend/.yarn/*
+!frontend/.yarn/patches
+!frontend/.yarn/plugins
+!frontend/.yarn/releases
+!frontend/.yarn/versions
+
+frontend/coverage/
+
+# next.js
+frontend/.next/
+frontend/out/
+
+# production
+frontend/build/
+
+# debug
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/.pnpm-debug.log*
+
+# vercel
+frontend/.vercel/
+
+# typescript
+frontend/*.tsbuildinfo
+frontend/next-env.d.ts
+
+# =========================
+# BACKEND (Python/FastAPI)
+# =========================
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+backend/build/
+backend/develop-eggs/
+backend/dist/
+backend/downloads/
+backend/eggs/
+backend/.eggs/
+backend/lib/
+backend/lib64/
+backend/parts/
+backend/sdist/
+backend/var/
+backend/wheels/
+backend/share/python-wheels/
+backend/*.egg-info/
+backend/.installed.cfg
+backend/*.egg
+backend/MANIFEST
+
+# Virtual Environments
+backend/venv/
+backend/env/
+backend/.env/
+backend/.venv/
+venv/
+env/
+
+# Celery stuff
+backend/celerybeat-schedule
+backend/celerybeat.pid
+
+# Flask / Django / FastAPI stuff
+backend/instance/
+backend/.webassets-cache
+
+# Database / SQLite
+backend/*.sqlite3
+backend/db.sqlite3
+
+# Static files generated locally
+backend/static/post_*.png
+backend/output.png

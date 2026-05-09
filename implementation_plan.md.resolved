@@ -1,0 +1,104 @@
+# AI-Powered Instagram Post Generator
+
+This implementation plan outlines the architecture and steps to build a full-stack AI-powered web application that scrapes the latest AI news, generates Instagram-ready posts using Groq API and Pillow, allows template-based visual generation, and emails the results.
+
+## User Review Required
+
+> [!IMPORTANT]
+> Please review the proposed architecture and tech stack below. The project involves multiple interconnected components (Next.js frontend, FastAPI backend, PostgreSQL database, Redis, Celery workers), which makes Docker Compose the ideal way to manage and run the entire stack seamlessly. 
+
+> [!CAUTION]
+> Creating this application from scratch will require setting up external service credentials (Groq API, Email provider, database credentials). These will be managed via `.env` files.
+
+## Open Questions
+
+> [!WARNING]
+> Please provide your feedback on the following questions before we begin implementation:
+> 1. **Email Service**: Do you have a preference among SMTP, SendGrid, or Resend? If no preference, I recommend `SMTP` for testing or `Resend` for ease of use.
+> 2. **Base URLs**: Which specific AI news websites should be included in the default list for scraping (e.g., TechCrunch, OpenAI blog)?
+> 3. **Infrastructure**: Shall we use Docker Compose to spin up the PostgreSQL database and Redis server automatically, along with our backend and workers? This will make the setup much easier.
+> 4. **Branding Assets**: Do you have a specific Instagram logo/branding image we should use for the templates? We will need this to fulfill the requirement of including it in every post.
+> 5. **API Keys**: Do you currently have a Groq API key available to use?
+
+## Proposed Architecture
+
+### 1. Frontend (Next.js)
+- **Tech**: Next.js, React, TailwindCSS, TypeScript, Axios.
+- **Pages**:
+  - `Dashboard / Scraped Articles Page`: Displays article cards with filters (Today, Yesterday, 7 Days, 10 Days).
+  - `Generator / Edit Page`: UI for previewing the generated post, editing the title/description, changing templates, and triggering regenerations.
+  - `Email Success Page`: Confirmation page after sending the email.
+- **Features**: Grid cards, Toast notifications, responsive design, dark/light mode, template selector.
+
+### 2. Backend (FastAPI)
+- **Tech**: FastAPI, Python, SQLAlchemy.
+- **APIs**:
+  - `GET /api/articles`: Fetch scraped articles (with date filters).
+  - `POST /api/scrape`: Trigger background scraping job.
+  - `POST /api/generate`: Trigger Groq API content generation (returns title, caption, hashtags).
+  - `POST /api/image`: Generate the Instagram image using selected template and content.
+  - `POST /api/email`: Trigger background email delivery.
+  - `GET /api/templates`: Fetch available templates.
+
+### 3. Background Jobs (Celery + Redis)
+- **Scraping Worker**: Uses BeautifulSoup, Requests, Playwright, and Newspaper3k to scrape websites asynchronously.
+- **Image Generation Task**: Uses Pillow (PIL) to generate images off the main thread if needed (though FastAPI can also handle it for synchronous previews).
+- **Email Worker**: Sends the email with the generated PNG attachment without blocking the frontend.
+
+### 4. AI & Image Engine
+- **Text Generation**: Groq API with customized prompts for modern, social-media-friendly Instagram captions and titles.
+- **Image Generation**: Pillow-based template engine supporting `modern_dark`, `glassmorphism`, etc. Dynamic text wrapping, positioning, and logo overlay.
+
+### 5. Database (PostgreSQL)
+- **Models**:
+  - `Article`: Title, summary, image_url, published_date, source_url.
+  - `Post`: Generated title, caption, template_used, image_path, article_id.
+  - `Log`: Email delivery logs.
+
+## Proposed Project Structure
+
+```text
+/
+├── docker-compose.yml       # Includes PostgreSQL, Redis, Backend, Celery, Frontend
+├── .env.example
+├── backend/
+│   ├── main.py
+│   ├── alembic/             # Database migrations
+│   ├── alembic.ini
+│   ├── api/
+│   │   ├── routes.py
+│   ├── core/
+│   │   ├── config.py
+│   │   ├── database.py      # Database connection and session management
+│   ├── models/              # SQLAlchemy database models
+│   ├── schemas/             # Pydantic validation schemas
+│   ├── services/
+│   │   ├── scraper.py
+│   │   ├── ai.py
+│   │   ├── image_generator.py
+│   │   ├── email.py
+│   ├── worker/
+│   │   ├── celery_app.py
+│   │   ├── tasks.py
+│   ├── templates/
+│   │   ├── modern_dark/
+│   │   ├── glassmorphism/
+│   ├── requirements.txt
+├── frontend/
+│   ├── src/
+│   │   ├── app/
+│   │   ├── components/
+│   │   ├── lib/
+│   │   ├── types/
+│   ├── package.json
+│   ├── tailwind.config.ts
+```
+
+## Verification Plan
+
+### Automated/Manual Verification
+- **Scraping**: Manually trigger the scraper API and verify that articles from the target sites are populated in the database.
+- **AI Content**: Trigger the `/generate` endpoint with mock scraped data and verify the tone and structure of the Groq API response.
+- **Image Generation**: Render posts using all 4-6 templates with varying text lengths to ensure Pillow text wrapping and positioning work correctly.
+- **Email Delivery**: Send a test email and verify the attachment and content format.
+- **Frontend Flow**: Walk through the complete user flow in the browser from selecting an article to editing and emailing.
