@@ -1,0 +1,14 @@
+{
+  "title_position": [70, 580],
+  "image_position": [70, 100],
+  "logo_position": [30, 30],
+  "title_font_size": 85,
+  "description_font_size": 48,
+  "image_size": [940, 420],
+  "background_color": [248, 250, 252],
+  "text_color": [15, 23, 42],
+  "description_color": [71, 85, 105],
+  "accent_color": [99, 102, 241],
+  "border_radius": 12,
+  "panel_opacity": 0.98
+}

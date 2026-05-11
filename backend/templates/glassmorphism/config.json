@@ -1,0 +1,16 @@
+{
+  "title_position": [60, 650],
+  "image_position": [60, 100],
+  "logo_position": [40, 40],
+  "title_font_size": 68,
+  "description_font_size": 38,
+  "image_size": [960, 450],
+  "background_color": [245, 248, 255],
+  "glass_opacity": 0.3,
+  "glass_blur": 20,
+  "border_radius": 16,
+  "text_color": [5, 15, 35],
+  "description_color": [30, 40, 60],
+  "accent_color": [59, 130, 246],
+  "panel_opacity": 0.9
+}

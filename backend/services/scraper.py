@@ -4,6 +4,7 @@ from newspaper import Article as NewspaperArticle
 from datetime import datetime, timedelta
 import time
 import random
+from urllib.parse import urljoin, urlparse
 
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
@@ -12,10 +13,10 @@ USER_AGENTS = [
 
 class ScraperService:
     def __init__(self):
-        # We can define a list of base URLs to scrape
         self.base_urls = [
+            "https://www.artificialintelligence-news.com/",
             "https://techcrunch.com/category/artificial-intelligence/",
-            # Can add more RSS or blog pages here
+            "https://www.wsj.com/tech/ai",
         ]
 
     def fetch_with_retry(self, url, retries=3):
@@ -47,39 +48,111 @@ class ScraperService:
             print(f"Error parsing article {url}: {e}")
             return None
 
-    def scrape_techcrunch(self):
-        # Example specific scraper for TechCrunch
-        html = self.fetch_with_retry("https://techcrunch.com/category/artificial-intelligence/")
+    def _extract_candidate_links(self, html, base_url):
+        soup = BeautifulSoup(html, "html.parser")
+        links = []
+        seen = set()
+
+        selectors = [
+            "article a[href]",
+            "h1 a[href]",
+            "h2 a[href]",
+            "h3 a[href]",
+            "a.post-card__title-link[href]",
+            "a.loop-card__title-link[href]",
+            "a[href*='/202']",
+        ]
+
+        for selector in selectors:
+            for a_tag in soup.select(selector):
+                href = (a_tag.get("href") or "").strip()
+                if not href:
+                    continue
+                full_url = urljoin(base_url, href)
+                parsed = urlparse(full_url)
+                if parsed.scheme not in ("http", "https"):
+                    continue
+                if parsed.netloc and parsed.netloc not in urlparse(base_url).netloc and "wsj.com" not in parsed.netloc:
+                    continue
+                # Basic cleanup to avoid tag/category/archive pages.
+                lower = full_url.lower()
+                if any(x in lower for x in ["/tag/", "/author/", "/category/", "/all-categories/", "/about/", "/contact/"]):
+                    continue
+                if full_url in seen:
+                    continue
+                seen.add(full_url)
+                links.append(full_url)
+
+        return links[:20]
+
+    def _parse_article_fallback(self, url):
+        try:
+            html = self.fetch_with_retry(url, retries=2)
+            if not html:
+                return None
+            soup = BeautifulSoup(html, "html.parser")
+            title_tag = soup.find("meta", property="og:title") or soup.find("title")
+            desc_tag = soup.find("meta", attrs={"name": "description"}) or soup.find("meta", property="og:description")
+            image_tag = soup.find("meta", property="og:image")
+
+            title = title_tag.get("content") if title_tag and title_tag.has_attr("content") else (title_tag.get_text(strip=True) if title_tag else "")
+            summary = desc_tag.get("content") if desc_tag and desc_tag.has_attr("content") else ""
+            image_url = image_tag.get("content") if image_tag and image_tag.has_attr("content") else ""
+
+            if not title:
+                return None
+
+            return {
+                "title": title,
+                "summary": summary[:500] if summary else title,
+                "content": summary or title,
+                "image_url": image_url,
+                "published_date": datetime.utcnow(),
+                "source_url": url
+            }
+        except Exception as e:
+            print(f"Fallback parse failed for {url}: {e}")
+            return None
+
+    def _scrape_source(self, source_url):
+        html = self.fetch_with_retry(source_url)
         if not html:
             return []
-            
-        soup = BeautifulSoup(html, "html.parser")
+
+        candidate_links = self._extract_candidate_links(html, source_url)
         articles_data = []
-        
-        # Techcrunch specific article link extraction (Note: DOM structure changes often, this is a placeholder)
-        for a_tag in soup.find_all("a", class_="post-block__title__link"):
-            url = a_tag.get("href")
-            if url:
-                parsed = self.parse_article_newspaper(url)
-                if parsed:
-                    articles_data.append(parsed)
-                    
+        for url in candidate_links:
+            parsed = self.parse_article_newspaper(url)
+            if not parsed:
+                parsed = self._parse_article_fallback(url)
+            if not parsed:
+                continue
+            # Keep only entries with useful fields
+            if not parsed.get("title") or not parsed.get("source_url"):
+                continue
+            articles_data.append(parsed)
+
         return articles_data
 
     def scrape_all(self, days_ago: int = 1):
         cutoff_date = datetime.utcnow() - timedelta(days=days_ago)
         results = []
-        
-        # Scrape techcrunch
-        tc_articles = self.scrape_techcrunch()
-        for art in tc_articles:
-            # Add basic filtering
-            if isinstance(art["published_date"], datetime):
-                # Ensure it's timezone naive for comparison or handle timezone aware
-                pub_date = art["published_date"].replace(tzinfo=None)
-                if pub_date >= cutoff_date:
+        seen_urls = set()
+
+        for source in self.base_urls:
+            source_articles = self._scrape_source(source)
+            for art in source_articles:
+                src = art.get("source_url")
+                if not src or src in seen_urls:
+                    continue
+                seen_urls.add(src)
+
+                published = art.get("published_date")
+                if isinstance(published, datetime):
+                    pub_date = published.replace(tzinfo=None)
+                    if pub_date >= cutoff_date:
+                        results.append(art)
+                else:
                     results.append(art)
-            else:
-                results.append(art)
-                
+
         return results

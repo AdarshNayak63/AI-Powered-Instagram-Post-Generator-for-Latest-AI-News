@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { ArrowLeft, Send, Image as ImageIcon, CheckCircle, RefreshCw } from 'lucide-react';
 import { api, getTemplates, generateImage, sendEmail } from '@/lib/api';
@@ -10,10 +10,18 @@ export default function GeneratorPage() {
   const router = useRouter();
   const postId = parseInt(params.id as string);
   
-  const [post, setPost] = useState<any>(null);
+  type PostData = {
+    id: number;
+    generated_title?: string;
+    generated_caption?: string;
+    template_used?: string;
+    image_path?: string;
+  };
+
+  const [post, setPost] = useState<PostData | null>(null);
   const [templates, setTemplates] = useState<{id: string, name: string}[]>([]);
-  const [selectedTemplate, setSelectedTemplate] = useState('modern_dark');
-  const [email, setEmail] = useState('');
+  const [selectedTemplate, setSelectedTemplate] = useState('professional_clean');
+  const fixedRecipient = 'lipunnayak069@gmail.com';
   
   const [title, setTitle] = useState('');
   const [caption, setCaption] = useState('');
@@ -22,15 +30,17 @@ export default function GeneratorPage() {
   const [generatingImg, setGeneratingImg] = useState(false);
   const [sendingEmail, setSendingEmail] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
+  const [previewError, setPreviewError] = useState(false);
+  const [imageVersion, setImageVersion] = useState(0);
 
-  useEffect(() => {
-    if (postId) {
-      loadPostData();
-      loadTemplates();
-    }
-  }, [postId]);
+  const getPreviewSrc = (imagePath?: string) => {
+    if (!imagePath || imagePath === "placeholder.png") return null;
+    const normalized = imagePath.replace(/^\/+/, "");
+    const staticPath = normalized.startsWith("static/") ? normalized : `static/${normalized}`;
+    return `/api/proxy/${staticPath}?v=${imageVersion}`;
+  };
 
-  const loadPostData = async () => {
+  const loadPostData = useCallback(async () => {
     try {
       // In a real app we'd fetch the post by ID. For now we assume the backend returns it after generation, 
       // or we simulate it here if we don't have a GET /posts/:id endpoint yet.
@@ -40,41 +50,73 @@ export default function GeneratorPage() {
         setPost(response.data);
         setTitle(response.data.generated_title);
         setCaption(response.data.generated_caption);
-        setSelectedTemplate(response.data.template_used || 'modern_dark');
+        const activeTemplate = response.data.template_used || 'modern_dark';
+        setSelectedTemplate(activeTemplate);
+        setPreviewError(false);
+
+        if (!response.data.image_path || response.data.image_path === "placeholder.png") {
+          try {
+            const regenerated = await generateImage(postId, activeTemplate);
+            if (regenerated?.post) {
+              setPost(regenerated.post);
+              setImageVersion((v) => v + 1);
+            } else {
+              const refreshed = await api.get(`/api/posts/${postId}`).catch(() => null);
+              if (refreshed && refreshed.data) {
+                setPost(refreshed.data);
+                setImageVersion((v) => v + 1);
+              }
+            }
+          } catch (regenerateError) {
+            console.error('Auto-regeneration failed', regenerateError);
+          }
+        }
       } else {
         // Fallback mock if backend endpoint is missing during dev
         setTitle("AI generated title hook goes here...");
         setCaption("This is an AI generated caption full of insights.\n\n#AI #Tech");
         setPost({ id: postId, image_path: "placeholder.png" });
       }
-    } catch (e) {
-      console.error(e);
+    } catch (error) {
+      console.error(error);
     }
     setLoading(false);
-  };
+  }, [postId]);
 
-  const loadTemplates = async () => {
+  const loadTemplates = useCallback(async () => {
     try {
       const data = await getTemplates();
       if (data && data.templates) {
         setTemplates(data.templates);
       }
-    } catch (e) {
+    } catch {
       setTemplates([
         { id: "modern_dark", name: "Modern Dark" },
         { id: "glassmorphism", name: "Glassmorphism" }
       ]);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (postId) {
+      loadPostData();
+      loadTemplates();
+    }
+  }, [postId, loadPostData, loadTemplates]);
 
   const handleTemplateChange = async (templateId: string) => {
     setSelectedTemplate(templateId);
     setGeneratingImg(true);
+    setPreviewError(false);
     try {
       // Re-generate image on the backend with new template
-      await generateImage(postId, templateId);
-      // Reload post to get new image path
-      await loadPostData();
+      const result = await generateImage(postId, templateId);
+      if (result?.post) {
+        setPost(result.post);
+      } else {
+        await loadPostData();
+      }
+      setImageVersion((v) => v + 1);
     } catch (error) {
       console.error("Failed to change template", error);
       alert("Failed to regenerate image with new template.");
@@ -83,17 +125,12 @@ export default function GeneratorPage() {
   };
 
   const handleSendEmail = async () => {
-    if (!email || !email.includes('@')) {
-      alert("Please enter a valid email address.");
-      return;
-    }
-    
     setSendingEmail(true);
     try {
       // Optional: Save the edited title and caption to the backend first
       await api.put(`/api/posts/${postId}`, { generated_title: title, generated_caption: caption }).catch(() => console.log('Save failed'));
       
-      await sendEmail(postId, email);
+      await sendEmail(postId, fixedRecipient);
       setEmailSent(true);
     } catch (error) {
       console.error("Failed to send email", error);
@@ -201,7 +238,18 @@ export default function GeneratorPage() {
                     (Requires Backend PIL generation)
                   </p>
                   {post?.image_path && post.image_path !== "placeholder.png" && (
-                    <img src={`http://localhost:5000/${post.image_path}`} className="absolute inset-0 w-full h-full object-cover" alt="Preview" />
+                    <img
+                      src={getPreviewSrc(post.image_path) || undefined}
+                      className="absolute inset-0 w-full h-full object-cover"
+                      alt="Preview"
+                      onError={() => setPreviewError(true)}
+                      onLoad={() => setPreviewError(false)}
+                    />
+                  )}
+                  {previewError && (
+                    <p className="absolute bottom-4 left-4 right-4 text-red-300 text-xs text-center">
+                      Failed to load generated image. Please change template once to regenerate.
+                    </p>
                   )}
                 </div>
               )}
@@ -219,18 +267,14 @@ export default function GeneratorPage() {
               ) : (
                 <>
                   <h3 className="font-bold text-lg mb-4">Export & Send</h3>
-                  <div className="flex gap-3">
-                    <input
-                      type="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="Enter your email address"
-                      className="flex-1 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    />
+                  <div className="space-y-3">
+                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                      Recipient: <strong>{fixedRecipient}</strong>
+                    </p>
                     <button
                       onClick={handleSendEmail}
-                      disabled={sendingEmail || !email}
-                      className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-xl font-medium transition-all shadow-md flex items-center gap-2 disabled:opacity-50"
+                      disabled={sendingEmail}
+                      className="w-full bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-xl font-medium transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-50"
                     >
                       {sendingEmail ? <RefreshCw className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
                       Send

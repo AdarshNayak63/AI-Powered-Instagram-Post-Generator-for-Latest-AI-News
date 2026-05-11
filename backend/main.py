@@ -3,9 +3,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from api.routes import router as api_router
 import os
+from core.database import Base, engine
+from models import models  # noqa: F401 - ensure model metadata is registered
 
 app = FastAPI(title="AI-Powered Instagram Post Generator API")
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], # For production, restrict to frontend URL
@@ -16,8 +17,12 @@ app.add_middleware(
 
 app.include_router(api_router, prefix="/api")
 
-os.makedirs("static", exist_ok=True)
-app.mount("/static", StaticFiles(directory="static"), name="static")
+# Ensure local/dev databases are initialized even when migrations are missing.
+Base.metadata.create_all(bind=engine)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+os.makedirs(STATIC_DIR, exist_ok=True)
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 @app.get("/")
 def read_root():

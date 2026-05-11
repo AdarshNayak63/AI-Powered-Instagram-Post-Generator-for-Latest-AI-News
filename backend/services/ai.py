@@ -9,6 +9,14 @@ def get_groq_client():
 
 def generate_instagram_content(article_title: str, article_summary: str, article_content: str = ""):
     client = get_groq_client()
+    preferred_model = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+    candidate_models = [
+        preferred_model,
+        "llama-3.1-8b-instant",
+        "llama-3.3-70b-versatile"
+    ]
+    # Preserve order but deduplicate.
+    models_to_try = list(dict.fromkeys(candidate_models))
     
     prompt = f"""
     You are an expert Social Media Manager for a tech news Instagram account.
@@ -25,18 +33,23 @@ def generate_instagram_content(article_title: str, article_summary: str, article
     }}
     """
     
-    try:
-        response = client.chat.completions.create(
-            messages=[{"role": "user", "content": prompt}],
-            model="llama3-8b-8192", # Defaulting to a fast Llama3 model on Groq
-            response_format={"type": "json_object"}
-        )
-        content = response.choices[0].message.content
-        return json.loads(content)
-    except Exception as e:
-        print(f"Error generating AI content: {e}")
-        return {
-            "title": article_title[:50] + "...",
-            "caption": article_summary,
-            "hashtags": "#AI #News"
-        }
+    last_error = None
+    for model_name in models_to_try:
+        try:
+            response = client.chat.completions.create(
+                messages=[{"role": "user", "content": prompt}],
+                model=model_name,
+                response_format={"type": "json_object"}
+            )
+            content = response.choices[0].message.content
+            return json.loads(content)
+        except Exception as e:
+            last_error = e
+            print(f"Groq generation failed for model '{model_name}': {e}")
+
+    print(f"Error generating AI content, using fallback text: {last_error}")
+    return {
+        "title": article_title[:50] + "...",
+        "caption": article_summary,
+        "hashtags": "#AI #News"
+    }

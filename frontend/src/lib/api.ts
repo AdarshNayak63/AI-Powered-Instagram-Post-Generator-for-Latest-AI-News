@@ -1,15 +1,27 @@
 import axios from 'axios';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
+const resolveApiUrl = () => {
+  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
+
+  // In browser, reuse the current host so LAN access works too.
+  if (typeof window !== 'undefined') {
+    return `${window.location.protocol}//${window.location.hostname}:5001`;
+  }
+
+  return 'http://localhost:5001';
+};
+
+export const API_URL = resolveApiUrl();
+const API_PROXY_BASE = '/api/proxy';
 
 export const api = axios.create({
-  baseURL: API_URL,
+  baseURL: API_PROXY_BASE,
   headers: {
     'Content-Type': 'application/json',
   },
 });
 
-export const fetchArticles = async (days: number = 1) => {
+export const fetchArticles = async (days: number = 7) => {
   const response = await api.get(`/api/articles?days=${days}`);
   return response.data;
 };

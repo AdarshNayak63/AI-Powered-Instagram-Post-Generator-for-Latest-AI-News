@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { ExternalLink, Sparkles, RefreshCw, Calendar } from 'lucide-react';
 import { fetchArticles, triggerScrape, generatePost } from '@/lib/api';
@@ -20,13 +20,9 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [scraping, setScraping] = useState(false);
   const [generatingId, setGeneratingId] = useState<number | null>(null);
-  const [filterDays, setFilterDays] = useState(1);
+  const [filterDays, setFilterDays] = useState(7);
 
-  useEffect(() => {
-    loadArticles(filterDays);
-  }, [filterDays]);
-
-  const loadArticles = async (days: number) => {
+  const loadArticles = useCallback(async (days: number) => {
     setLoading(true);
     try {
       const data = await fetchArticles(days);
@@ -35,7 +31,11 @@ export default function Dashboard() {
       console.error('Failed to load articles', error);
     }
     setLoading(false);
-  };
+  }, []);
+
+  useEffect(() => {
+    loadArticles(filterDays);
+  }, [filterDays, loadArticles]);
 
   const handleScrape = async () => {
     setScraping(true);

@@ -16,3 +16,4 @@ playwright
 emails
 python-multipart
 python-dotenv
+lxml_html_clean

@@ -1,4 +1,14 @@
-from celery import shared_task
+try:
+    from celery import shared_task
+    CELERY_AVAILABLE = True
+except ImportError:
+    # Fallback decorator when celery is not available
+    def shared_task(name):
+        def decorator(func):
+            return func
+        return decorator
+    CELERY_AVAILABLE = False
+
 import time
 from services.scraper import ScraperService
 from core.database import SessionLocal
@@ -42,23 +52,69 @@ def scrape_articles_task(filter_days: int = 1):
 
 @shared_task(name="send_email_task")
 def send_email_task(post_id: int, email_to: str):
-    # Dummy email sender for now
-    # Replace with Resend or SMTP when API keys are available
-    print(f"Simulating email send for post {post_id} to {email_to}...")
+    print(f"Sending email for post {post_id} to {email_to}...")
     db = SessionLocal()
     try:
         post = db.query(models.Post).filter(models.Post.id == post_id).first()
-        if post:
+        if not post:
+            return {"status": "error", "message": "Post not found"}
+        
+        # Prepare email content
+        subject = f"AI Instagram Post: {post.generated_title}"
+        body = f"""Hello!
+
+Here's your AI-generated Instagram post:
+
+Title: {post.generated_title}
+
+Caption:
+{post.generated_caption}
+
+Template: {post.template_used}
+
+Best regards,
+AI Tech News Generator
+"""
+        
+        # Get image path
+        image_path = None
+        if post.image_path:
+            # Convert relative path to absolute
+            if post.image_path.startswith("static/"):
+                import os
+                backend_dir = os.path.dirname(os.path.dirname(__file__))
+                image_path = os.path.join(backend_dir, post.image_path)
+        
+        # Send email
+        from services.email import send_email_with_attachment
+        success = send_email_with_attachment(email_to, subject, body, image_path)
+        
+        # Log the attempt
+        log = models.Log(
+            post_id=post.id,
+            email_sent_to=email_to,
+            status="success" if success else "failed"
+        )
+        db.add(log)
+        db.commit()
+        
+        return {"status": "success" if success else "failed", "post_id": post_id, "email_to": email_to}
+        
+    except Exception as e:
+        db.rollback()
+        print(f"Error sending email: {e}")
+        # Log the failure
+        try:
             log = models.Log(
-                post_id=post.id,
-                email_to=email_to,
-                status="success"
+                post_id=post_id,
+                email_sent_to=email_to,
+                status="failed",
+                error_message=str(e)
             )
             db.add(log)
             db.commit()
-    except Exception as e:
-        db.rollback()
-        print(e)
+        except:
+            pass
+        return {"status": "error", "message": str(e), "post_id": post_id, "email_to": email_to}
     finally:
         db.close()
-    return {"status": "success", "post_id": post_id, "email_to": email_to}
