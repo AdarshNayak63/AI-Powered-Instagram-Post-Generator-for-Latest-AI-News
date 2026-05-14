@@ -91,6 +91,9 @@ def generate_post(request: schemas.GenerateRequest, db: Session = Depends(get_db
             raise HTTPException(status_code=404, detail="Article not found")
 
         ai_content = generate_instagram_content(article.title, article.summary, article.title)
+        card_description = (ai_content.get("card_description") or "").strip()
+        if card_description:
+            article.summary = card_description
     except HTTPException:
         raise
     except Exception as e:
