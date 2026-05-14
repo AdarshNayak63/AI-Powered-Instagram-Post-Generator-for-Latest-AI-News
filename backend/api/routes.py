@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy.orm import joinedload
 from sqlalchemy.exc import IntegrityError
 from typing import List
 from datetime import datetime, timedelta
@@ -8,7 +9,6 @@ from core.database import get_db
 from models import models
 from schemas import schemas
 from services.ai import generate_instagram_content
-from services.image_generator import ImageGenerator
 
 router = APIRouter()
 
@@ -91,33 +91,24 @@ def generate_post(request: schemas.GenerateRequest, db: Session = Depends(get_db
             raise HTTPException(status_code=404, detail="Article not found")
 
         ai_content = generate_instagram_content(article.title, article.summary, article.title)
-
-        generator = ImageGenerator(template_name="modern_dark")
-        output_filename = f"post_{article.id}_{datetime.now().strftime('%Y%m%d%H%M%S')}.png"
-        import os
-        output_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
-        os.makedirs(output_dir, exist_ok=True)
-        output_path = os.path.join(output_dir, output_filename)
-
-        generator.generate(
-            title=ai_content.get("title", article.title),
-            description=ai_content.get("caption", article.summary),
-            article_image_url=article.image_url,
-            output_path=output_path
-        )
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to generate image: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate post content: {str(e)}")
 
     try:
+        caption_text = (ai_content.get("caption", article.summary) or "").strip()
+        hashtags_text = (ai_content.get("hashtags", "#AI") or "").strip()
+        if hashtags_text and hashtags_text not in caption_text:
+            caption_text = f"{caption_text}\n\n{hashtags_text}" if caption_text else hashtags_text
+
         new_post = models.Post(
             article_id=article.id,
             generated_title=ai_content.get("title", article.title),
-            generated_caption=ai_content.get("caption", article.summary) + "\n\n" + ai_content.get("hashtags", "#AI"),
-            hashtags=ai_content.get("hashtags", ""),
-            template_used="modern_dark",
-            image_path=f"static/{output_filename}"
+            generated_caption=caption_text,
+            hashtags=hashtags_text,
+            template_used="instagram_article_card",
+            image_path=None,
         )
         db.add(new_post)
         db.commit()
@@ -129,12 +120,12 @@ def generate_post(request: schemas.GenerateRequest, db: Session = Depends(get_db
 
 @router.get("/posts", response_model=List[schemas.PostResponse])
 def get_posts(db: Session = Depends(get_db)):
-    posts = db.query(models.Post).order_by(models.Post.created_at.desc()).limit(50).all()
+    posts = db.query(models.Post).options(joinedload(models.Post.article)).order_by(models.Post.created_at.desc()).limit(50).all()
     return posts
 
 @router.get("/posts/{post_id}", response_model=schemas.PostResponse)
 def get_post(post_id: int, db: Session = Depends(get_db)):
-    post = db.query(models.Post).filter(models.Post.id == post_id).first()
+    post = db.query(models.Post).options(joinedload(models.Post.article)).filter(models.Post.id == post_id).first()
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
     return post
@@ -156,38 +147,10 @@ def update_post(post_id: int, update_data: dict, db: Session = Depends(get_db)):
 
 @router.post("/image")
 def generate_image_route(request: dict, db: Session = Depends(get_db)):
-    try:
-        post_id = request.get("post_id")
-        template = request.get("template", "modern_dark")
-
-        post = db.query(models.Post).filter(models.Post.id == post_id).first()
-        if not post:
-            raise HTTPException(status_code=404, detail="Post not found")
-
-        generator = ImageGenerator(template_name=template)
-        output_filename = f"post_{post.article_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}.png"
-        import os
-        output_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
-        os.makedirs(output_dir, exist_ok=True)
-        output_path = os.path.join(output_dir, output_filename)
-
-        generator.generate(
-            title=post.generated_title,
-            description=post.generated_caption,
-            article_image_url=post.article.image_url if post.article else None,
-            output_path=output_path
-        )
-
-        post.template_used = template
-        post.image_path = f"static/{output_filename}"
-        db.commit()
-        db.refresh(post)
-        return {"message": "Image regenerated", "post": post}
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to regenerate image: {str(e)}")
+    raise HTTPException(
+        status_code=410,
+        detail="Image generation is disabled. Posts now use an Instagram-ready article card in the frontend.",
+    )
 
 @router.post("/email")
 def send_email(request: schemas.EmailRequest, db: Session = Depends(get_db)):
@@ -217,16 +180,4 @@ def send_email(request: schemas.EmailRequest, db: Session = Depends(get_db)):
 
 @router.get("/templates")
 def get_templates():
-    print("DEBUG: get_templates called - returning new template list")
-    return {
-        "templates": [
-            {"id": "professional_clean", "name": "Professional Clean"},
-            {"id": "clean_modern", "name": "Clean Modern"},
-            {"id": "clean_minimal", "name": "Clean Minimal"},
-            {"id": "clean_gradient", "name": "Clean Gradient"},
-            {"id": "modern_dark", "name": "Modern Dark"},
-            {"id": "glassmorphism", "name": "Glassmorphism"},
-            {"id": "minimal_light", "name": "Minimal Light"},
-            {"id": "tech_neon", "name": "Tech Neon"}
-        ]
-    }
+    return {"templates": []}

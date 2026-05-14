@@ -34,7 +34,10 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
-    loadArticles(filterDays);
+    const timer = setTimeout(() => {
+      loadArticles(filterDays);
+    }, 0);
+    return () => clearTimeout(timer);
   }, [filterDays, loadArticles]);
 
   const handleScrape = async () => {

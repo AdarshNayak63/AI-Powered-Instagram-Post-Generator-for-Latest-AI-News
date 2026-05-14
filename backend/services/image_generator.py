@@ -1,197 +1,339 @@
 import os
-import json
-import requests
-from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageOps
 from io import BytesIO
-from datetime import datetime
+from typing import List, Tuple
+
+import requests
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
+
 
 class ImageGenerator:
-    def __init__(self, template_name="professional_clean"):
-        self.template_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates", template_name)
-        self.config = self._load_config()
-        self.font_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates", "fonts", "Inter-Bold.ttf")
-        
-    def _load_config(self):
-        config_path = os.path.join(self.template_dir, "config.json")
-        if os.path.exists(config_path):
-            with open(config_path, 'r') as f:
-                return json.load(f)
-        return self._get_default_config()
-    
-    def _get_default_config(self):
-        return {
-            "title_position": [70, 580],
-            "image_position": [70, 100],
-            "logo_position": [30, 30],
-            "title_font_size": 85,
-            "description_font_size": 48,
-            "image_size": [940, 420],
-            "background_color": [255, 255, 255],
-            "text_color": [10, 10, 10],
-            "description_color": [60, 60, 60],
-            "accent_color": [0, 122, 255],
-            "border_radius": 12
-        }
-    
-    def _get_font(self, size):
-        try:
-            return ImageFont.truetype(self.font_path, size)
-        except:
-            return ImageFont.load_default()
+    CANVAS_SIZE = (1080, 1080)
 
-    def _load_font_candidates(self, size):
-        candidates = [
-            self.font_path,
-            os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates", "fonts", "Inter-Regular.ttf"),
-            os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates", "fonts", "Poppins-Bold.ttf"),
-            os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates", "fonts", "Poppins-Regular.ttf"),
-            os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates", "fonts", "Montserrat-Bold.ttf"),
-            os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates", "fonts", "Montserrat-Regular.ttf"),
-        ]
-        for path in candidates:
-            if path and os.path.exists(path):
+    SAFE_PAD_X = 56
+    SAFE_PAD_TOP = 36
+    SAFE_PAD_BOTTOM = 36
+
+    CARD_RADIUS = 36
+    HERO_HEIGHT = 500
+    FOOTER_HEIGHT = 90
+
+    BG_COLOR = (15, 17, 26)
+    CARD_COLOR = (8, 10, 20)
+    TEXT_PRIMARY = (245, 246, 250)
+    TEXT_SECONDARY = (176, 182, 196)
+    DIVIDER_COLOR = (44, 48, 61)
+    ACCENT_RED = (216, 21, 33)
+    WHITE = (255, 255, 255)
+
+    HEADLINE_MIN = 90
+    HEADLINE_MAX = 130
+    SUBHEAD_MIN = 38
+    SUBHEAD_MAX = 52
+    FOOTER_MIN = 32
+    FOOTER_MAX = 42
+    BADGE_MIN = 28
+    BADGE_MAX = 40
+    BULLET_MIN = 38
+    BULLET_MAX = 46
+
+    def __init__(self, template_name: str = "news_card"):
+        self.template_name = template_name
+        self.font_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates", "fonts")
+
+    def _font(self, size: int, bold: bool = False):
+        if bold:
+            candidates = [
+                "Inter-Bold.ttf",
+                "Poppins-Bold.ttf",
+                "Montserrat-Bold.ttf",
+                "Arial-Bold.ttf",
+            ]
+        else:
+            candidates = [
+                "Inter-Regular.ttf",
+                "Poppins-Regular.ttf",
+                "Montserrat-Regular.ttf",
+                "Arial.ttf",
+            ]
+        for name in candidates:
+            path = os.path.join(self.font_dir, name)
+            if os.path.exists(path):
                 try:
                     return ImageFont.truetype(path, size)
                 except Exception:
                     continue
         return ImageFont.load_default()
-    
-    def wrap_text(self, text, font, max_width):
-        lines = []
+
+    def _text_width(self, draw: ImageDraw.ImageDraw, text: str, font) -> int:
+        bbox = draw.textbbox((0, 0), text, font=font)
+        return bbox[2] - bbox[0]
+
+    def _line_height(self, draw: ImageDraw.ImageDraw, font) -> int:
+        bbox = draw.textbbox((0, 0), "Ag", font=font)
+        return bbox[3] - bbox[1]
+
+    def _wrap(self, draw: ImageDraw.ImageDraw, text: str, font, max_width: int) -> List[str]:
+        text = (text or "").strip()
+        if not text:
+            return []
         words = text.split()
-        current_line = ""
-        
+        lines: List[str] = []
+        current = ""
         for word in words:
-            test_line = current_line + " " + word if current_line else word
-            bbox = font.getbbox(test_line)
-            text_width = bbox[2] - bbox[0]
-            
-            if text_width <= max_width:
-                current_line = test_line
+            probe = word if not current else f"{current} {word}"
+            if self._text_width(draw, probe, font) <= max_width:
+                current = probe
             else:
-                if current_line:
-                    lines.append(current_line)
-                current_line = word
-        
-        if current_line:
-            lines.append(current_line)
-        
+                if current:
+                    lines.append(current)
+                current = word
+        if current:
+            lines.append(current)
         return lines
-    
-    def generate(self, title: str, description: str, article_image_url: str = None, output_path: str = "output.png"):
-        # Instagram-first 1:1 canvas with subtle gradient base
-        width, height = 1080, 1080
-        bg = tuple(self.config.get("background_color", [247, 250, 255]))
-        base = Image.new('RGB', (width, height), color=bg)
-        draw = ImageDraw.Draw(base)
 
-        gradient = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-        gdraw = ImageDraw.Draw(gradient)
-        accent = tuple(self.config.get("accent_color", [34, 197, 94]))
-        for y in range(height):
-            alpha = int(80 * (y / height))
-            gdraw.line([(0, y), (width, y)], fill=(accent[0], accent[1], accent[2], alpha))
-        base = Image.alpha_composite(base.convert("RGBA"), gradient).convert("RGB")
-        draw = ImageDraw.Draw(base)
+    def _fit_text_block(
+        self,
+        draw: ImageDraw.ImageDraw,
+        text: str,
+        min_size: int,
+        max_size: int,
+        max_width: int,
+        max_height: int,
+        max_lines: int,
+        bold: bool,
+    ) -> Tuple[ImageFont.FreeTypeFont, List[str], int]:
+        text = (text or "").strip()
+        best_font = self._font(min_size, bold=bold)
+        best_lines = self._wrap(draw, text, best_font, max_width)[:max_lines] if text else []
+        best_size = min_size
 
-        # Content card
-        card_margin = 42
-        card = [card_margin, card_margin, width - card_margin, height - card_margin]
-        card_radius = int(self.config.get("border_radius", 24))
-        draw.rounded_rectangle(card, radius=card_radius, fill=(255, 255, 255), outline=(228, 234, 244), width=3)
+        for size in range(max_size, min_size - 1, -2):
+            font = self._font(size, bold=bold)
+            lines = self._wrap(draw, text, font, max_width) if text else []
+            if not lines:
+                return font, [], size
 
-        # Top brand row
-        brand_font = self._load_font_candidates(34)
-        chip_font = self._load_font_candidates(24)
-        meta_font = self._load_font_candidates(24)
-        title_color = tuple(self.config.get("text_color", [12, 20, 38]))
-        logo_x, logo_y = card_margin + 26, card_margin + 24
-        logo_size = 50
-        draw.rounded_rectangle([logo_x, logo_y, logo_x + logo_size, logo_y + logo_size], radius=16, fill=accent)
-        draw.text((logo_x + 70, logo_y + 8), "AI Tech News", font=brand_font, fill=title_color)
+            if len(lines) > max_lines:
+                continue
 
-        date_text = datetime.now().strftime("%d %b %Y")
-        date_bbox = meta_font.getbbox(date_text)
-        date_w = date_bbox[2] - date_bbox[0]
-        draw.text((card[2] - 26 - date_w, logo_y + 12), date_text, font=meta_font, fill=(100, 112, 135))
+            lh = self._line_height(draw, font)
+            line_gap = max(8, int(size * 0.18))
+            total_height = len(lines) * lh + (len(lines) - 1) * line_gap
+            longest = max(self._text_width(draw, l, font) for l in lines)
+            if total_height <= max_height and longest <= max_width:
+                return font, lines, size
 
-        # Hero image
-        hero_x = card_margin + 26
-        hero_y = logo_y + 76
-        hero_w = width - (card_margin + 26) * 2
-        hero_h = 560
-        hero_box = [hero_x, hero_y, hero_x + hero_w, hero_y + hero_h]
+            best_font, best_lines, best_size = font, lines[:max_lines], size
 
-        if article_image_url:
-            try:
-                response = requests.get(article_image_url, timeout=10)
-                art_img = Image.open(BytesIO(response.content)).convert("RGBA")
-                target_size = (hero_w, hero_h)
-                art_img = ImageOps.fit(art_img, target_size, Image.Resampling.LANCZOS)
+        if best_lines and len(best_lines) == max_lines:
+            last = best_lines[-1].rstrip(" .,:;")
+            best_lines[-1] = f"{last}..."
+        return best_font, best_lines, best_size
 
-                mask = Image.new('L', target_size, 0)
-                mask_draw = ImageDraw.Draw(mask)
-                border_radius = 26
-                try:
-                    mask_draw.rounded_rectangle((0, 0) + target_size, radius=border_radius, fill=255)
-                except TypeError:
-                    mask_draw.rectangle((0, 0) + target_size, fill=255)
-                art_img.putalpha(mask)
+    def _download_or_fallback_hero(self, width: int, height: int, image_url: str = None) -> Image.Image:
+        fallback = Image.new("RGB", (width, height), (36, 40, 52))
+        fdraw = ImageDraw.Draw(fallback)
+        title_font = self._font(52, bold=True)
+        desc_font = self._font(32, bold=False)
+        fdraw.text((48, height // 2 - 52), "News Visual", fill=(236, 238, 244), font=title_font)
+        fdraw.text((48, height // 2 + 14), "No source image available", fill=(198, 203, 214), font=desc_font)
 
-                base.paste(art_img, (hero_x, hero_y), art_img)
-            except Exception as e:
-                print(f"Failed to load article image: {e}")
+        if not image_url:
+            return fallback
 
-        # Hero bottom overlay for category chip
+        try:
+            resp = requests.get(image_url, timeout=14)
+            resp.raise_for_status()
+            img = Image.open(BytesIO(resp.content)).convert("RGB")
+            return ImageOps.fit(img, (width, height), Image.Resampling.LANCZOS)
+        except Exception as exc:
+            print(f"Failed to load hero image: {exc}")
+            return fallback
+
+    def _round_mask(self, size: Tuple[int, int], radius: int) -> Image.Image:
+        mask = Image.new("L", size, 0)
+        d = ImageDraw.Draw(mask)
+        d.rounded_rectangle([0, 0, size[0], size[1]], radius=radius, fill=255)
+        return mask
+
+    def _draw_shadow_card(self, base: Image.Image, rect: Tuple[int, int, int, int], radius: int):
+        shadow = Image.new("RGBA", base.size, (0, 0, 0, 0))
+        sdraw = ImageDraw.Draw(shadow)
+        x1, y1, x2, y2 = rect
+        sdraw.rounded_rectangle([x1 + 6, y1 + 8, x2 + 6, y2 + 8], radius=radius, fill=(0, 0, 0, 170))
+        shadow = shadow.filter(ImageFilter.GaussianBlur(16))
+        base.alpha_composite(shadow)
+
+    def generate(
+        self,
+        title: str,
+        description: str,
+        article_image_url: str = None,
+        output_path: str = "output.png",
+        layout_data: dict = None,
+    ):
+        layout_data = layout_data or {}
+        category = (layout_data.get("category") or "AI").upper().strip()[:14]
+        subtitle = (layout_data.get("subtitle") or "Latest update").strip()
+        bullet_point = (layout_data.get("bullet_point") or description or "").strip()
+        alert_label = (layout_data.get("alert_label") or "NEWS ALERT").upper().strip()[:28]
+
+        canvas = Image.new("RGBA", self.CANVAS_SIZE, self.BG_COLOR + (255,))
+
+        card_left = self.SAFE_PAD_X
+        card_top = self.SAFE_PAD_TOP
+        card_right = self.CANVAS_SIZE[0] - self.SAFE_PAD_X
+        card_bottom = self.CANVAS_SIZE[1] - self.SAFE_PAD_BOTTOM
+        card_rect = (card_left, card_top, card_right, card_bottom)
+
+        self._draw_shadow_card(canvas, card_rect, self.CARD_RADIUS)
+        cdraw = ImageDraw.Draw(canvas)
+        cdraw.rounded_rectangle(card_rect, radius=self.CARD_RADIUS, fill=self.CARD_COLOR)
+
+        hero_left = card_left + 18
+        hero_top = card_top + 18
+        hero_right = card_right - 18
+        hero_bottom = hero_top + self.HERO_HEIGHT
+        hero_w = hero_right - hero_left
+        hero_h = hero_bottom - hero_top
+
+        hero = self._download_or_fallback_hero(hero_w, hero_h, article_image_url).convert("RGBA")
+        hero_mask = self._round_mask((hero_w, hero_h), 24)
+        hero.putalpha(hero_mask)
+        canvas.alpha_composite(hero, (hero_left, hero_top))
+
         overlay = Image.new("RGBA", (hero_w, hero_h), (0, 0, 0, 0))
-        odraw = ImageDraw.Draw(overlay)
+        od = ImageDraw.Draw(overlay)
         for y in range(hero_h):
-            # stronger towards bottom for text readability
-            alpha = int(max(0, (y - hero_h * 0.56) / (hero_h * 0.44)) * 180)
-            odraw.line([(0, y), (hero_w, y)], fill=(6, 10, 20, alpha))
-        base = Image.alpha_composite(base.convert("RGBA"), Image.new("RGBA", (width, height), (0, 0, 0, 0)))
-        base.paste(overlay, (hero_x, hero_y), overlay)
-        draw = ImageDraw.Draw(base)
+            alpha = int(max(0, (y - hero_h * 0.6) / (hero_h * 0.4)) * 165)
+            od.line([(0, y), (hero_w, y)], fill=(5, 8, 17, alpha))
+        canvas.alpha_composite(overlay, (hero_left, hero_top))
+        draw = ImageDraw.Draw(canvas)
 
-        chip_text = "LATEST AI NEWS"
-        chip_pad_x, chip_pad_y = 18, 10
-        chip_bbox = chip_font.getbbox(chip_text)
-        chip_w = (chip_bbox[2] - chip_bbox[0]) + chip_pad_x * 2
-        chip_h = (chip_bbox[3] - chip_bbox[1]) + chip_pad_y * 2
-        chip_x = hero_x + 22
-        chip_y = hero_y + hero_h - chip_h - 18
-        draw.rounded_rectangle([chip_x, chip_y, chip_x + chip_w, chip_y + chip_h], radius=14, fill=(255, 255, 255))
-        draw.text((chip_x + chip_pad_x, chip_y + chip_pad_y - 2), chip_text, font=chip_font, fill=(13, 20, 34))
+        badge_font, badge_lines, badge_size = self._fit_text_block(
+            draw,
+            category,
+            self.BADGE_MIN,
+            self.BADGE_MAX,
+            max_width=280,
+            max_height=58,
+            max_lines=1,
+            bold=True,
+        )
+        badge_text = badge_lines[0] if badge_lines else category
+        badge_w = self._text_width(draw, badge_text, badge_font) + 42
+        badge_h = self._line_height(draw, badge_font) + 16
+        badge_x = hero_left + 22
+        badge_y = hero_bottom - badge_h - 18
+        draw.rounded_rectangle([badge_x, badge_y, badge_x + badge_w, badge_y + badge_h], radius=24, fill=self.ACCENT_RED)
+        draw.text((badge_x + 21, badge_y + 8), badge_text, font=badge_font, fill=self.WHITE)
 
-        # Text block below image
-        headline_font = self._load_font_candidates(58)
-        desc_font = self._load_font_candidates(34)
-        headline_x = hero_x
-        headline_y = hero_y + hero_h + 32
-        max_text_width = hero_w
+        text_left = card_left + 32
+        text_right = card_right - 32
+        text_width = text_right - text_left
 
-        title_lines = self.wrap_text((title or "").strip(), headline_font, max_text_width)
-        title_lines = title_lines[:2]
-        for line in title_lines:
-            draw.text((headline_x, headline_y), line, font=headline_font, fill=title_color)
-            headline_y += headline_font.size + 8
+        footer_top = card_bottom - self.FOOTER_HEIGHT
+        body_top = hero_bottom + 26
+        body_bottom = footer_top - 22
+        body_height = body_bottom - body_top
 
-        body_y = headline_y + 12
-        desc_color = tuple(self.config.get("description_color", [76, 88, 110]))
-        summary = (description or "").strip()
-        if len(summary) > 210:
-            summary = summary[:207].rstrip() + "..."
-        desc_lines = self.wrap_text(summary, desc_font, max_text_width)
-        desc_lines = desc_lines[:3]
-        for line in desc_lines:
-            draw.text((headline_x, body_y), line, font=desc_font, fill=desc_color)
-            body_y += desc_font.size + 8
+        headline_alloc = int(body_height * 0.60)
+        sub_alloc = int(body_height * 0.16)
+        bullet_alloc = body_height - headline_alloc - sub_alloc - 26
 
-        # Footer divider for polish
-        footer_y = height - card_margin - 54
-        draw.line([(hero_x, footer_y), (hero_x + hero_w, footer_y)], fill=(232, 237, 245), width=2)
-        draw.text((hero_x, footer_y + 12), "@aitechnews", font=self._load_font_candidates(24), fill=(120, 132, 152))
-        draw.text((hero_x + hero_w - 180, footer_y + 12), "Swipe for more", font=self._load_font_candidates(24), fill=(120, 132, 152))
+        headline_font, headline_lines, headline_size = self._fit_text_block(
+            draw,
+            title or "",
+            self.HEADLINE_MIN,
+            self.HEADLINE_MAX,
+            max_width=text_width,
+            max_height=headline_alloc,
+            max_lines=5,
+            bold=True,
+        )
+        if not headline_lines:
+            headline_lines = ["Latest Headline"]
+        headline_lines = headline_lines[:5]
 
-        base.save(output_path)
+        y = body_top
+        h_lh = self._line_height(draw, headline_font)
+        h_gap = max(10, int(headline_size * 0.18))
+        for line in headline_lines:
+            draw.text((text_left, y), line, font=headline_font, fill=self.TEXT_PRIMARY)
+            y += h_lh + h_gap
+        y += 4
+
+        adaptive_sub_max = self.SUBHEAD_MAX
+        adaptive_bullet_max = self.BULLET_MAX
+        if len(headline_lines) >= 4:
+            adaptive_sub_max = max(self.SUBHEAD_MIN, self.SUBHEAD_MAX - 6)
+            adaptive_bullet_max = max(self.BULLET_MIN, self.BULLET_MAX - 6)
+        elif len(headline_lines) == 3:
+            adaptive_sub_max = max(self.SUBHEAD_MIN, self.SUBHEAD_MAX - 2)
+            adaptive_bullet_max = max(self.BULLET_MIN, self.BULLET_MAX - 2)
+
+        sub_font, sub_lines, sub_size = self._fit_text_block(
+            draw,
+            subtitle,
+            self.SUBHEAD_MIN,
+            adaptive_sub_max,
+            max_width=text_width,
+            max_height=sub_alloc,
+            max_lines=2,
+            bold=False,
+        )
+        if sub_lines:
+            sub_lh = self._line_height(draw, sub_font)
+            sub_gap = max(6, int(sub_size * 0.16))
+            for line in sub_lines[:2]:
+                draw.text((text_left, y), line, font=sub_font, fill=self.TEXT_SECONDARY)
+                y += sub_lh + sub_gap
+
+        draw.line([(text_left, y + 6), (text_right, y + 6)], fill=self.DIVIDER_COLOR, width=3)
+        y += 24
+
+        bullet_font, bullet_lines, bullet_size = self._fit_text_block(
+            draw,
+            bullet_point,
+            self.BULLET_MIN,
+            adaptive_bullet_max,
+            max_width=text_width - 34,
+            max_height=bullet_alloc,
+            max_lines=3,
+            bold=False,
+        )
+
+        dot_y = y + 17
+        draw.ellipse([text_left, dot_y, text_left + 14, dot_y + 14], fill=self.ACCENT_RED)
+        bullet_x = text_left + 26
+        b_lh = self._line_height(draw, bullet_font)
+        b_gap = max(8, int(bullet_size * 0.16))
+        for line in bullet_lines:
+            draw.text((bullet_x, y), line, font=bullet_font, fill=(230, 233, 240))
+            y += b_lh + b_gap
+
+        draw.rectangle([card_left, footer_top, card_right, card_bottom], fill=self.ACCENT_RED)
+
+        footer_font, footer_lines, _ = self._fit_text_block(
+            draw,
+            alert_label,
+            self.FOOTER_MIN,
+            self.FOOTER_MAX,
+            max_width=(card_right - card_left) - 80,
+            max_height=self.FOOTER_HEIGHT - 22,
+            max_lines=1,
+            bold=True,
+        )
+        footer_text = footer_lines[0] if footer_lines else alert_label
+        fw = self._text_width(draw, footer_text, footer_font)
+        fh = self._line_height(draw, footer_font)
+        fx = card_left + ((card_right - card_left - fw) // 2)
+        fy = footer_top + ((self.FOOTER_HEIGHT - fh) // 2) - 2
+        draw.text((fx, fy), footer_text, font=footer_font, fill=self.WHITE)
+
+        rgb = canvas.convert("RGB")
+        output_dir = os.path.dirname(output_path)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+        rgb.save(output_path)
         return output_path
