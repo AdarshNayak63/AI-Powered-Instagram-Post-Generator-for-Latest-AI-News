@@ -47,7 +47,14 @@ export const generateImage = async (postId: number, template: string) => {
   return response.data;
 };
 
-export const sendEmail = async (postId: number, email: string) => {
-  const response = await api.post('/api/email', { post_id: postId, email_to: email });
+export type SendEmailPayload = {
+  instagram_hook: string;
+  description: string;
+  template_used: string;
+  template_html: string;
+};
+
+export const sendEmail = async (postId: number, email: string, payload: SendEmailPayload) => {
+  const response = await api.post('/api/email', { post_id: postId, email_to: email, ...payload });
   return response.data;
 };

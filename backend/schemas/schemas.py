@@ -47,3 +47,7 @@ class GenerateRequest(BaseModel):
 class EmailRequest(BaseModel):
     post_id: int
     email_to: str
+    instagram_hook: Optional[str] = None
+    description: Optional[str] = None
+    template_used: Optional[str] = None
+    template_html: Optional[str] = None

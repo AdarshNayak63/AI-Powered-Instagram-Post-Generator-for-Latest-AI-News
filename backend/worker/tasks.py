@@ -51,7 +51,14 @@ def scrape_articles_task(filter_days: int = 1):
         db.close()
 
 @shared_task(name="send_email_task")
-def send_email_task(post_id: int, email_to: str):
+def send_email_task(
+    post_id: int,
+    email_to: str,
+    instagram_hook: str = None,
+    description: str = None,
+    template_used: str = None,
+    template_html: str = None,
+):
     print(f"Sending email for post {post_id} to {email_to}...")
     db = SessionLocal()
     try:
@@ -59,21 +66,52 @@ def send_email_task(post_id: int, email_to: str):
         if not post:
             return {"status": "error", "message": "Post not found"}
         
-        # Prepare email content
-        subject = f"AI Instagram Post: {post.generated_title}"
+        # Prepare email content from live UI payload first, then DB values.
+        article_title = (post.article.title if post.article else "") if hasattr(post, "article") else ""
+        hook_text = (instagram_hook or post.generated_title or article_title or "AI Tech Update").strip()
+        description_text = (
+            description
+            or (post.generated_caption or "").strip()
+            or ((post.article.summary or "").strip() if post.article else "")
+        ).strip()
+        template_id = (template_used or post.template_used or "instagram_article_card").strip()
+        safe_template_html = (template_html or "").replace("<script", "&lt;script")
+        subject = f"AI Instagram Post: {hook_text}"
         body = f"""Hello!
 
 Here's your AI-generated Instagram post:
 
-Title: {post.generated_title}
+Instagram Hook (Title):
+{hook_text}
 
-Caption:
-{post.generated_caption}
+Description / Caption:
+{description_text}
 
-Template: {post.template_used}
+Selected Dynamic Template (Rendered HTML):
+{safe_template_html or '[Template HTML provided in email HTML part]'}
 
 Best regards,
 AI Tech News Generator
+"""
+
+        html_body = f"""\
+<!doctype html>
+<html>
+  <body style="margin:0;padding:24px;background:#f3f4f6;font-family:Arial,sans-serif;color:#111827;">
+    <div style="max-width:680px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:16px;padding:20px;">
+      <h2 style="margin:0 0 12px 0;font-size:22px;">Instagram Hook (Title)</h2>
+      <p style="margin:0 0 20px 0;font-size:20px;line-height:1.3;font-weight:700;">{hook_text}</p>
+
+      <h3 style="margin:0 0 10px 0;font-size:18px;">Description / Caption</h3>
+      <p style="margin:0 0 22px 0;white-space:pre-wrap;line-height:1.55;">{description_text}</p>
+
+      <h3 style="margin:0 0 10px 0;font-size:18px;">Selected Dynamic Template (Rendered HTML)</h3>
+      <div style="margin:0;padding:0;">
+        {safe_template_html if safe_template_html else f"<div style='padding:14px;border-radius:10px;background:#f9fafb;border:1px solid #e5e7eb;'>No live template HTML was sent for template: {template_id}</div>"}
+      </div>
+    </div>
+  </body>
+</html>
 """
         
         # Get image path
@@ -87,7 +125,7 @@ AI Tech News Generator
         
         # Send email
         from services.email import send_email_with_attachment
-        success = send_email_with_attachment(email_to, subject, body, image_path)
+        success = send_email_with_attachment(email_to, subject, body, image_path, html_body=html_body)
         
         # Log the attempt
         log = models.Log(

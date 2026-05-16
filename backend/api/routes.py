@@ -143,6 +143,8 @@ def update_post(post_id: int, update_data: dict, db: Session = Depends(get_db)):
         post.generated_title = update_data["generated_title"]
     if "generated_caption" in update_data:
         post.generated_caption = update_data["generated_caption"]
+    if "template_used" in update_data:
+        post.template_used = update_data["template_used"]
         
     db.commit()
     db.refresh(post)
@@ -157,7 +159,7 @@ def generate_image_route(request: dict, db: Session = Depends(get_db)):
 
 @router.post("/email")
 def send_email(request: schemas.EmailRequest, db: Session = Depends(get_db)):
-    fixed_recipient = "lipunnayak069@gmail.com"
+    recipient = request.email_to
     post = db.query(models.Post).filter(models.Post.id == request.post_id).first()
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
@@ -165,18 +167,40 @@ def send_email(request: schemas.EmailRequest, db: Session = Depends(get_db)):
     # Try background email task first, fallback to synchronous
     try:
         from worker.tasks import send_email_task
-        task = send_email_task.delay(request.post_id, fixed_recipient)
-        return {"message": "Email sending started", "task_id": task.id, "mode": "async"}
+        task = send_email_task.delay(
+            request.post_id,
+            recipient,
+            request.instagram_hook,
+            request.description,
+            request.template_used,
+            request.template_html,
+        )
+        return {"message": "Email sending started", "task_id": task.id, "mode": "async", "recipient": recipient}
     except Exception as celery_error:
         print(f"Celery unavailable, sending email synchronously: {celery_error}")
         # Fallback to synchronous email sending
         try:
             from worker.tasks import send_email_task
-            result = send_email_task(request.post_id, fixed_recipient)
+            result = send_email_task(
+                request.post_id,
+                recipient,
+                request.instagram_hook,
+                request.description,
+                request.template_used,
+                request.template_html,
+            )
             if result.get("status") == "success":
-                return {"message": "Email sent successfully", "mode": "sync", "result": result}
+                return {"message": "Email sent successfully", "mode": "sync", "result": result, "recipient": recipient}
             else:
-                return {"message": "Email sending failed", "mode": "sync", "error": result.get("message", "Unknown error")}
+                raise HTTPException(
+                    status_code=502,
+                    detail={
+                        "message": "Email sending failed",
+                        "mode": "sync",
+                        "recipient": recipient,
+                        "error": result.get("message", "Unknown error"),
+                    },
+                )
         except Exception as sync_error:
             print(f"Synchronous email sending failed: {sync_error}")
             raise HTTPException(status_code=500, detail=f"Email sending failed: {str(sync_error)}")

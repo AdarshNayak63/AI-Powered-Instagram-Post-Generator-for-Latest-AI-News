@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings
+from pathlib import Path
 
 class Settings(BaseSettings):
     GROQ_API_KEY: str = ""
@@ -12,8 +13,9 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: str = ""
     RESEND_API_KEY: str = ""
     EMAIL_FROM: str = ""
+    FORCE_EMAIL_TO: str = ""
 
     class Config:
-        env_file = ".env"
+        env_file = str((Path(__file__).resolve().parent.parent / ".env"))
 
 settings = Settings()
