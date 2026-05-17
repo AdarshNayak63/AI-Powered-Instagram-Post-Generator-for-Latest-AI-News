@@ -52,6 +52,7 @@ export type SendEmailPayload = {
   description: string;
   template_used: string;
   template_html: string;
+  template_image_base64?: string;
 };
 
 export const sendEmail = async (postId: number, email: string, payload: SendEmailPayload) => {

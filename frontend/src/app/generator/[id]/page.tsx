@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { ArrowLeft, Send, CheckCircle, RefreshCw } from 'lucide-react';
+import ReactDOMServer from 'react-dom/server';
+import { toPng } from 'html-to-image';
 import { api, sendEmail } from '@/lib/api';
 
 type ArticleData = {
@@ -150,7 +152,7 @@ export default function GeneratorPage() {
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>(TEMPLATES[0].template_id);
   const [templateLabel, setTemplateLabel] = useState('Spotlight');
   const [templateSubLabel, setTemplateSubLabel] = useState('Global tech update');
-  const [footerLeft, setFooterLeft] = useState('@futurewire');
+  const [footerLeft, setFooterLeft] = useState('@THEAIBRIEF365');
   const [footerRight, setFooterRight] = useState('What You Should Know');
 
   const loadPostData = useCallback(async () => {
@@ -182,16 +184,56 @@ export default function GeneratorPage() {
     setSendingEmail(true);
     try {
       const templateHtml = buildTemplateEmailHtml();
+
+      // Capture the template preview as an image
+      let templateImageBase64 = undefined;
+      const captureWrapper = document.getElementById('capture-wrapper');
+
+      if (captureWrapper) {
+        // Wait for all images to load
+        const images = Array.from(captureWrapper.querySelectorAll('img'));
+        await Promise.all(
+          images.map((img) => {
+            if (img.complete) return Promise.resolve();
+            return new Promise((resolve) => {
+              img.onload = resolve;
+              img.onerror = resolve;
+            });
+          })
+        );
+
+        // Wait for fonts to load
+        await document.fonts.ready;
+
+        // Force exact pixel dimensions to prevent responsive collapse during clone
+        const rect = captureWrapper.getBoundingClientRect();
+
+        templateImageBase64 = await toPng(captureWrapper, {
+          cacheBust: true,
+          pixelRatio: 3, // High resolution
+          width: rect.width,
+          height: rect.height,
+          style: {
+            width: `${rect.width}px`,
+            height: `${rect.height}px`,
+            transform: 'scale(1)',
+            margin: '0',
+            display: 'block',
+          }
+        });
+      }
+
       await api.put(`/api/posts/${postId}`, {
         generated_title: title,
         generated_caption: caption,
         template_used: selectedTemplateId,
       });
       await sendEmail(postId, fixedRecipient, {
-        instagram_hook: displayTitle,
-        description: displaySummary,
+        instagram_hook: title || displayTitle,
+        description: caption || displaySummary,
         template_used: selectedTemplateId,
         template_html: templateHtml,
+        template_image_base64: templateImageBase64,
       });
       setEmailSent(true);
     } catch (error) {
@@ -227,60 +269,48 @@ export default function GeneratorPage() {
       .replace(/'/g, '&#39;');
 
   const buildTemplateEmailHtml = () => {
-    const safeTitle = escapeHtml(displayTitle);
-    const safeSummary = escapeHtml(displaySummary);
-    const safeImage = escapeHtml(displayImage || '');
-    const safeLabel = escapeHtml(templateLabel);
-    const safeSubLabel = escapeHtml(templateSubLabel);
-    const safeFooterLeft = escapeHtml(footerLeft);
-    const safeFooterRight = escapeHtml(footerRight);
-
-    const themeMap: Record<string, { bg: string; panel: string; border: string; accent: string; text: string }> = {
-      'spotlight-focus': { bg: '#05070d', panel: '#0a0f1d', border: 'rgba(34,211,238,0.35)', accent: '#22d3ee', text: '#ecfeff' },
-      'breaking-news-alert': { bg: '#070b14', panel: '#0b1020', border: 'rgba(255,255,255,0.14)', accent: '#ef4444', text: '#f8fafc' },
-      'premium-magazine-alert': { bg: '#11131a', panel: '#141821', border: 'rgba(211,183,131,0.4)', accent: '#d3b783', text: '#f5efe4' },
-      'neon-tech': { bg: '#050814', panel: '#0b1226', border: 'rgba(34,211,238,0.45)', accent: '#22d3ee', text: '#e0f2fe' },
-    };
-    const theme = themeMap[selectedTemplateId] || { bg: '#0a0f1b', panel: '#111827', border: 'rgba(255,255,255,0.2)', accent: '#6366f1', text: '#f9fafb' };
+    const previewElement = renderTemplatePreview();
+    const staticHtml = ReactDOMServer.renderToStaticMarkup(previewElement);
 
     return `
-<div style="max-width:420px;margin:0 auto;background:${theme.bg};padding:16px;border-radius:24px;font-family:Arial,sans-serif;">
-  <div style="background:${theme.panel};border:1px solid ${theme.border};border-radius:20px;overflow:hidden;color:${theme.text};">
-    <div style="position:relative;height:220px;background:linear-gradient(135deg,#334155,#0f172a);">
-      ${safeImage ? `<img src="${safeImage}" alt="Template image" style="width:100%;height:100%;object-fit:cover;display:block;" />` : ''}
-      <div style="position:absolute;top:12px;left:12px;background:${theme.accent};color:#082f49;padding:6px 10px;border-radius:999px;font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;">${safeLabel}</div>
-    </div>
-    <div style="padding:14px 14px 10px 14px;">
-      <h2 style="margin:0;font-size:20px;line-height:1.2;font-weight:800;color:${theme.text};">${safeTitle}</h2>
-      <p style="margin:6px 0 0 0;font-size:12px;opacity:.88;text-transform:uppercase;letter-spacing:.08em;">${safeSubLabel}</p>
-      <div style="height:1px;background:rgba(255,255,255,0.28);margin:10px 0;"></div>
-      <p style="margin:0;font-size:13px;line-height:1.45;color:${theme.text};white-space:pre-wrap;">${safeSummary}</p>
-    </div>
-    <div style="display:flex;justify-content:space-between;gap:8px;padding:10px 14px;background:linear-gradient(90deg,${theme.accent},#60a5fa);color:#082f49;font-size:10px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;">
-      <span>${safeFooterLeft}</span>
-      <span>${safeFooterRight}</span>
-    </div>
-  </div>
-</div>`;
+      <div style="font-family: Arial, sans-serif; background-color: #f3f4f6; padding: 20px; display: flex; justify-content: center;">
+        <div style="max-width: 480px; width: 100%; aspect-ratio: 1 / 1; border-radius: 28px; overflow: hidden; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);">
+          ${staticHtml}
+        </div>
+      </div>
+    `;
   };
 
   const renderTemplatePreview = () => {
-    const imageNode = displayImage ? (
-      <img src={displayImage} alt={post?.article?.title || 'Article'} className="w-full h-full object-cover" />
+    const safeTitle = displayTitle || '';
+    const safeSummary = displaySummary || '';
+
+    const proxiedImageUrl = displayImage ? `/api/proxy-image?url=${encodeURIComponent(displayImage)}` : '';
+
+    const imageNode = proxiedImageUrl ? (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img src={proxiedImageUrl} alt={post?.article?.title || 'Article'} crossOrigin="anonymous" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
     ) : (
-      <div className="w-full h-full bg-gradient-to-br from-slate-500 to-slate-800" />
+      <div style={{ width: '100%', height: '100%', background: 'linear-gradient(to bottom right, #64748b, #1e293b)' }} />
     );
+
+    const lineClamp = (lines: number) => ({
+      display: '-webkit-box',
+      WebkitLineClamp: lines,
+      WebkitBoxOrient: 'vertical' as const,
+      overflow: 'hidden',
+    });
 
     if (selectedTemplateId === 'gradient-glassmorphism') {
       return (
-        <div className="w-full h-full relative bg-gradient-to-br from-cyan-500 via-blue-600 to-fuchsia-600 p-6">
-          <div className="absolute -top-10 -right-10 w-44 h-44 rounded-full bg-white/25 blur-2xl" />
-          <div className="absolute -bottom-10 -left-10 w-44 h-44 rounded-full bg-purple-300/25 blur-2xl" />
-          <div className="relative w-full h-full rounded-[26px] border border-white/35 bg-white/15 backdrop-blur-xl p-4 flex flex-col shadow-2xl">
-            <div className="h-[52%] rounded-2xl overflow-hidden border border-white/30">{imageNode}</div>
-            <h2 className="mt-4 text-[17px] leading-[1.25] font-bold text-white line-clamp-4">{displayTitle}</h2>
-            <div className="w-full h-[2px] bg-white/35 my-3" />
-            <p className="text-[12px] leading-[1.38] text-white/95 line-clamp-6">{displaySummary}</p>
+        <div style={{ width: '100%', height: '100%', position: 'relative', background: 'linear-gradient(to bottom right, #06b6d4, #2563eb, #c026d3)', padding: '24px', boxSizing: 'border-box' }}>
+          <div style={{ position: 'absolute', top: '-40px', right: '-40px', width: '176px', height: '176px', borderRadius: '50%', background: 'rgba(255,255,255,0.25)', filter: 'blur(40px)' }} />
+          <div style={{ position: 'absolute', bottom: '-40px', left: '-40px', width: '176px', height: '176px', borderRadius: '50%', background: 'rgba(216,180,254,0.25)', filter: 'blur(40px)' }} />
+          <div style={{ position: 'relative', width: '100%', height: '100%', borderRadius: '26px', border: '1px solid rgba(255,255,255,0.35)', background: 'rgba(255,255,255,0.15)', backdropFilter: 'blur(24px)', padding: '16px', display: 'flex', flexDirection: 'column', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)', boxSizing: 'border-box' }}>
+            <div style={{ height: '52%', borderRadius: '16px', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.3)' }}>{imageNode}</div>
+            <h2 style={{ marginTop: '16px', fontSize: '17px', lineHeight: '1.25', fontWeight: 'bold', color: '#ffffff', margin: '16px 0 0 0', ...lineClamp(4) }}>{safeTitle}</h2>
+            <div style={{ width: '100%', height: '2px', background: 'rgba(255,255,255,0.35)', margin: '12px 0' }} />
+            <p style={{ fontSize: '12px', lineHeight: '1.38', color: 'rgba(255,255,255,0.95)', margin: '0', ...lineClamp(6) }}>{safeSummary}</p>
           </div>
         </div>
       );
@@ -288,28 +318,28 @@ export default function GeneratorPage() {
 
     if (selectedTemplateId === 'magazine-editorial') {
       return (
-        <div className="w-full h-full bg-[#f6f1e9] text-[#222222] p-5 flex flex-col">
-          <div className="text-[10px] tracking-[0.24em] uppercase font-semibold text-[#666] mb-2">Tech Brief</div>
-          <div className="h-[49%] rounded-2xl overflow-hidden">{imageNode}</div>
-          <h2 className="mt-4 text-[18px] leading-[1.24] font-semibold font-serif line-clamp-4">{displayTitle}</h2>
-          <div className="w-full h-[1px] bg-[#222]/25 my-3" />
-          <p className="text-[12px] leading-[1.42] text-[#2e2e2e] font-sans line-clamp-6">{displaySummary}</p>
+        <div style={{ width: '100%', height: '100%', background: '#f6f1e9', color: '#222222', padding: '20px', display: 'flex', flexDirection: 'column', boxSizing: 'border-box' }}>
+          <div style={{ fontSize: '10px', letterSpacing: '0.24em', textTransform: 'uppercase', fontWeight: '600', color: '#666666', marginBottom: '8px' }}>Tech Brief</div>
+          <div style={{ height: '49%', borderRadius: '16px', overflow: 'hidden' }}>{imageNode}</div>
+          <h2 style={{ marginTop: '16px', fontSize: '18px', lineHeight: '1.24', fontWeight: '600', fontFamily: 'Georgia, serif', margin: '16px 0 0 0', ...lineClamp(4) }}>{safeTitle}</h2>
+          <div style={{ width: '100%', height: '1px', background: 'rgba(34,34,34,0.25)', margin: '12px 0' }} />
+          <p style={{ fontSize: '12px', lineHeight: '1.42', color: '#2e2e2e', fontFamily: 'Arial, sans-serif', margin: '0', ...lineClamp(6) }}>{safeSummary}</p>
         </div>
       );
     }
 
     if (selectedTemplateId === 'neon-tech') {
       return (
-        <div className="w-full h-full bg-[#050814] p-4">
-          <div className="w-full h-full rounded-[24px] border border-cyan-300/70 shadow-[0_0_24px_rgba(34,211,238,0.28)] bg-gradient-to-b from-[#0b1226] to-[#040813] overflow-hidden flex flex-col">
-            <div className="h-[50%] relative">
+        <div style={{ width: '100%', height: '100%', background: '#050814', padding: '16px', boxSizing: 'border-box' }}>
+          <div style={{ width: '100%', height: '100%', borderRadius: '24px', border: '1px solid rgba(34,211,238,0.7)', boxShadow: '0 0 24px rgba(34,211,238,0.28)', background: 'linear-gradient(to bottom, #0b1226, #040813)', overflow: 'hidden', display: 'flex', flexDirection: 'column', boxSizing: 'border-box' }}>
+            <div style={{ height: '50%', position: 'relative' }}>
               {imageNode}
-              <div className="absolute inset-0 ring-1 ring-cyan-300/40" />
+              <div style={{ position: 'absolute', inset: 0, boxShadow: 'inset 0 0 0 1px rgba(34,211,238,0.4)' }} />
             </div>
-            <div className="p-5 flex-1">
-              <h2 className="text-[16px] leading-[1.24] font-extrabold text-cyan-100 line-clamp-4">{displayTitle}</h2>
-              <div className="w-full h-[2px] bg-gradient-to-r from-cyan-300 to-fuchsia-400 my-3 shadow-[0_0_12px_rgba(236,72,153,0.45)]" />
-              <p className="text-[12px] leading-[1.38] text-cyan-50/95 line-clamp-6">{displaySummary}</p>
+            <div style={{ padding: '20px', flex: '1', display: 'flex', flexDirection: 'column', boxSizing: 'border-box' }}>
+              <h2 style={{ fontSize: '16px', lineHeight: '1.24', fontWeight: '800', color: '#cffafe', margin: '0', ...lineClamp(4) }}>{safeTitle}</h2>
+              <div style={{ width: '100%', height: '2px', background: 'linear-gradient(to right, #67e8f9, #e879f9)', margin: '12px 0', boxShadow: '0 0 12px rgba(236,72,153,0.45)' }} />
+              <p style={{ fontSize: '12px', lineHeight: '1.38', color: 'rgba(236,254,255,0.95)', margin: '0', ...lineClamp(6) }}>{safeSummary}</p>
             </div>
           </div>
         </div>
@@ -318,33 +348,33 @@ export default function GeneratorPage() {
 
     if (selectedTemplateId === 'template_cinematic_story_pro') {
       return (
-        <div className="w-full h-full relative bg-[#06060a] p-4 overflow-hidden">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_80%_18%,rgba(234,179,8,0.22),transparent_34%),radial-gradient(circle_at_20%_82%,rgba(168,85,247,0.2),transparent_36%)]" />
-          <div className="absolute inset-0 bg-gradient-to-b from-[#090912] via-[#080913] to-[#040406]" />
-          <div className="relative w-full h-full rounded-[30px] overflow-hidden border border-amber-200/20 shadow-[0_30px_70px_rgba(0,0,0,0.65)]">
-            <div className="absolute inset-0">
+        <div style={{ width: '100%', height: '100%', position: 'relative', background: '#06060a', padding: '16px', overflow: 'hidden', boxSizing: 'border-box' }}>
+          <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(circle at 80% 18%, rgba(234,179,8,0.22), transparent 34%), radial-gradient(circle at 20% 82%, rgba(168,85,247,0.2), transparent 36%)' }} />
+          <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to bottom, #090912, #080913, #040406)' }} />
+          <div style={{ position: 'relative', width: '100%', height: '100%', borderRadius: '30px', overflow: 'hidden', border: '1px solid rgba(253,230,138,0.2)', boxShadow: '0 30px 70px rgba(0,0,0,0.65)', boxSizing: 'border-box' }}>
+            <div style={{ position: 'absolute', inset: 0 }}>
               {imageNode}
-              <div className="absolute inset-0 bg-gradient-to-t from-[#050507] via-[#090915]/65 to-transparent" />
-              <div className="absolute inset-0 bg-[radial-gradient(circle_at_75%_20%,rgba(250,204,21,0.2),transparent_35%)]" />
-              <div className="absolute inset-0 bg-black/25" />
+              <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top, #050507, rgba(9,9,21,0.65), transparent)' }} />
+              <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(circle at 75% 20%, rgba(250,204,21,0.2), transparent 35%)' }} />
+              <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.25)' }} />
             </div>
 
-              <div className="absolute top-4 left-4 px-3 py-1 rounded-md border border-amber-200/40 bg-black/35 backdrop-blur-md text-amber-100 text-[10px] font-bold tracking-[0.12em] uppercase">
+            <div style={{ position: 'absolute', top: '16px', left: '16px', padding: '4px 12px', borderRadius: '6px', border: '1px solid rgba(253,230,138,0.4)', background: 'rgba(0,0,0,0.35)', backdropFilter: 'blur(12px)', color: '#fef3c7', fontSize: '10px', fontWeight: 'bold', letterSpacing: '0.12em', textTransform: 'uppercase' }}>
               {templateLabel}
-              </div>
+            </div>
 
-            <div className="absolute left-5 right-5 top-[40%]">
-              <h2 className="text-[23px] leading-[1.1] font-extrabold tracking-tight text-white drop-shadow-[0_4px_16px_rgba(0,0,0,0.8)] line-clamp-4">
-                {displayTitle}
+            <div style={{ position: 'absolute', left: '20px', right: '20px', top: '40%' }}>
+              <h2 style={{ fontSize: '23px', lineHeight: '1.1', fontWeight: '800', letterSpacing: '-0.02em', color: '#ffffff', textShadow: '0 4px 16px rgba(0,0,0,0.8)', margin: '0', ...lineClamp(4) }}>
+                {safeTitle}
               </h2>
-              <p className="text-[11px] mt-1 text-amber-100/85 uppercase tracking-[0.12em] line-clamp-1">{templateSubLabel}</p>
-              <div className="w-24 h-[3px] rounded-full bg-gradient-to-r from-amber-300 to-fuchsia-300 shadow-[0_0_14px_rgba(251,191,36,0.7)] mt-3 mb-3" />
-              <div className="rounded-2xl border border-white/25 bg-white/10 backdrop-blur-xl px-4 py-3 shadow-[0_14px_32px_rgba(0,0,0,0.35)]">
-                <p className="text-[12px] leading-[1.42] text-white/95 line-clamp-6">{displaySummary}</p>
+              <p style={{ fontSize: '11px', marginTop: '4px', color: 'rgba(254,243,199,0.85)', textTransform: 'uppercase', letterSpacing: '0.12em', margin: '4px 0 0 0', ...lineClamp(1) }}>{templateSubLabel}</p>
+              <div style={{ width: '96px', height: '3px', borderRadius: '9999px', background: 'linear-gradient(to right, #fcd34d, #f0abfc)', boxShadow: '0 0 14px rgba(251,191,36,0.7)', margin: '12px 0' }} />
+              <div style={{ borderRadius: '16px', border: '1px solid rgba(255,255,255,0.25)', background: 'rgba(255,255,255,0.1)', backdropFilter: 'blur(24px)', padding: '12px 16px', boxShadow: '0 14px 32px rgba(0,0,0,0.35)', boxSizing: 'border-box' }}>
+                <p style={{ fontSize: '12px', lineHeight: '1.42', color: 'rgba(255,255,255,0.95)', margin: '0', ...lineClamp(6) }}>{safeSummary}</p>
               </div>
             </div>
 
-            <div className="absolute left-0 right-0 bottom-0 h-[12%] bg-gradient-to-r from-amber-300/95 via-yellow-200/90 to-fuchsia-300/90 text-[#1f1300] flex items-center justify-between px-5 text-[10px] font-extrabold uppercase tracking-[0.12em]">
+            <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: '12%', background: 'linear-gradient(to right, rgba(252,211,77,0.95), rgba(254,240,138,0.9), rgba(240,171,252,0.9))', color: '#1f1300', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', fontSize: '10px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.12em', boxSizing: 'border-box' }}>
               <span>{footerLeft}</span>
               <span>{footerRight}</span>
             </div>
@@ -355,15 +385,15 @@ export default function GeneratorPage() {
 
     if (selectedTemplateId === 'premium-card-stack') {
       return (
-        <div className="w-full h-full relative bg-gradient-to-b from-[#101629] to-[#060912] p-7">
-          <div className="absolute inset-x-10 top-10 bottom-10 rounded-[26px] bg-gradient-to-br from-indigo-400/25 to-cyan-300/20" />
-          <div className="absolute inset-x-8 top-8 bottom-8 rounded-[28px] bg-gradient-to-br from-slate-700/35 to-indigo-700/25" />
-          <div className="relative w-full h-full rounded-[26px] border border-white/20 bg-[#0d1324] shadow-2xl overflow-hidden flex flex-col">
-            <div className="h-[50%]">{imageNode}</div>
-            <div className="p-5">
-              <h2 className="text-[16px] leading-[1.26] font-extrabold text-white line-clamp-4">{displayTitle}</h2>
-              <div className="w-full h-[2px] bg-gradient-to-r from-amber-200/70 to-white/15 my-3" />
-              <p className="text-[12px] leading-[1.38] text-slate-100 line-clamp-6">{displaySummary}</p>
+        <div style={{ width: '100%', height: '100%', position: 'relative', background: 'linear-gradient(to bottom, #101629, #060912)', padding: '28px', boxSizing: 'border-box' }}>
+          <div style={{ position: 'absolute', left: '40px', right: '40px', top: '40px', bottom: '40px', borderRadius: '26px', background: 'linear-gradient(to bottom right, rgba(129,140,248,0.25), rgba(103,232,249,0.2))' }} />
+          <div style={{ position: 'absolute', left: '32px', right: '32px', top: '32px', bottom: '32px', borderRadius: '28px', background: 'linear-gradient(to bottom right, rgba(51,65,85,0.35), rgba(67,56,202,0.25))' }} />
+          <div style={{ position: 'relative', width: '100%', height: '100%', borderRadius: '26px', border: '1px solid rgba(255,255,255,0.2)', background: '#0d1324', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)', overflow: 'hidden', display: 'flex', flexDirection: 'column', boxSizing: 'border-box' }}>
+            <div style={{ height: '50%' }}>{imageNode}</div>
+            <div style={{ padding: '20px', boxSizing: 'border-box' }}>
+              <h2 style={{ fontSize: '16px', lineHeight: '1.26', fontWeight: '800', color: '#ffffff', margin: '0', ...lineClamp(4) }}>{safeTitle}</h2>
+              <div style={{ width: '100%', height: '2px', background: 'linear-gradient(to right, rgba(253,230,138,0.7), rgba(255,255,255,0.15))', margin: '12px 0' }} />
+              <p style={{ fontSize: '12px', lineHeight: '1.38', color: '#f1f5f9', margin: '0', ...lineClamp(6) }}>{safeSummary}</p>
             </div>
           </div>
         </div>
@@ -372,27 +402,27 @@ export default function GeneratorPage() {
 
     if (selectedTemplateId === 'breaking-news-alert') {
       return (
-        <div className="w-full h-full bg-[#070b14] text-white p-4">
-          <div className="w-full h-full rounded-[26px] overflow-hidden border border-white/10 shadow-[0_24px_50px_rgba(0,0,0,0.45)] bg-[#0b1020] flex flex-col">
-            <div className="relative h-[48%]">
+        <div style={{ width: '100%', height: '100%', background: '#070b14', color: '#ffffff', padding: '16px', boxSizing: 'border-box' }}>
+          <div style={{ width: '100%', height: '100%', borderRadius: '26px', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 24px 50px rgba(0,0,0,0.45)', background: '#0b1020', display: 'flex', flexDirection: 'column', boxSizing: 'border-box' }}>
+            <div style={{ position: 'relative', height: '48%' }}>
               {imageNode}
-              <div className="absolute inset-0 bg-gradient-to-t from-black/45 to-transparent" />
-              <div className="absolute top-4 left-4 px-3 py-1 rounded-full bg-red-600 text-[10px] font-extrabold tracking-[0.12em] uppercase">
+              <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top, rgba(0,0,0,0.45), transparent)' }} />
+              <div style={{ position: 'absolute', top: '16px', left: '16px', padding: '4px 12px', borderRadius: '9999px', background: '#dc2626', color: '#ffffff', fontSize: '10px', fontWeight: '800', letterSpacing: '0.12em', textTransform: 'uppercase' }}>
                 {templateLabel}
               </div>
             </div>
 
-            <div className="h-[40%] px-5 pt-4 pb-2 flex flex-col">
-              <h2 className="text-[18px] leading-[1.2] font-extrabold tracking-tight text-white line-clamp-4">{displayTitle}</h2>
-              <p className="text-[11px] text-slate-300 mt-1 line-clamp-1">{templateSubLabel}</p>
-              <div className="w-full h-[1px] bg-white/20 mt-3 mb-3" />
-              <p className="text-[12px] leading-[1.38] text-slate-100 line-clamp-6">{displaySummary}</p>
+            <div style={{ height: '40%', padding: '16px 20px 8px 20px', display: 'flex', flexDirection: 'column', boxSizing: 'border-box' }}>
+              <h2 style={{ fontSize: '18px', lineHeight: '1.2', fontWeight: '800', letterSpacing: '-0.02em', color: '#ffffff', margin: '0', ...lineClamp(4) }}>{safeTitle}</h2>
+              <p style={{ fontSize: '11px', color: '#cbd5e1', margin: '4px 0 0 0', ...lineClamp(1) }}>{templateSubLabel}</p>
+              <div style={{ width: '100%', height: '1px', background: 'rgba(255,255,255,0.2)', margin: '12px 0' }} />
+              <p style={{ fontSize: '12px', lineHeight: '1.38', color: '#f1f5f9', margin: '0', ...lineClamp(6) }}>{safeSummary}</p>
             </div>
 
-            <div className="h-[6%] bg-gradient-to-r from-red-600 to-red-500 text-white text-[10px] font-extrabold tracking-[0.16em] uppercase flex items-center px-5">
+            <div style={{ height: '6%', background: 'linear-gradient(to right, #dc2626, #ef4444)', color: '#ffffff', fontSize: '10px', fontWeight: '800', letterSpacing: '0.16em', textTransform: 'uppercase', display: 'flex', alignItems: 'center', padding: '0 20px', boxSizing: 'border-box' }}>
               News Alert
             </div>
-            <div className="h-[6%] bg-[#050910] text-[10px] text-slate-300 flex items-center justify-between px-5 uppercase tracking-[0.08em]">
+            <div style={{ height: '6%', background: '#050910', fontSize: '10px', color: '#cbd5e1', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', textTransform: 'uppercase', letterSpacing: '0.08em', boxSizing: 'border-box' }}>
               <span>{footerLeft}</span>
               <span>{footerRight}</span>
             </div>
@@ -403,29 +433,29 @@ export default function GeneratorPage() {
 
     if (selectedTemplateId === 'premium-magazine-alert') {
       return (
-        <div className="w-full h-full bg-gradient-to-b from-[#11131a] to-[#0b0c11] p-5">
-          <div className="w-full h-full rounded-[28px] overflow-hidden bg-[#141821] border border-[#d3b783]/35 shadow-[0_28px_60px_rgba(0,0,0,0.4)] flex flex-col">
-            <div className="relative h-[48%]">
+        <div style={{ width: '100%', height: '100%', background: 'linear-gradient(to bottom, #11131a, #0b0c11)', padding: '20px', boxSizing: 'border-box' }}>
+          <div style={{ width: '100%', height: '100%', borderRadius: '28px', overflow: 'hidden', background: '#141821', border: '1px solid rgba(211,183,131,0.35)', boxShadow: '0 28px 60px rgba(0,0,0,0.4)', display: 'flex', flexDirection: 'column', boxSizing: 'border-box' }}>
+            <div style={{ position: 'relative', height: '48%' }}>
               {imageNode}
-              <div className="absolute inset-0 bg-gradient-to-t from-[#141821]/85 via-[#141821]/25 to-transparent" />
-              <div className="absolute top-4 left-4 px-3 py-1 rounded-md bg-[#d3b783] text-[#1a1a1a] text-[10px] font-bold tracking-[0.1em] uppercase">
+              <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top, rgba(20,24,33,0.85), rgba(20,24,33,0.25), transparent)' }} />
+              <div style={{ position: 'absolute', top: '16px', left: '16px', padding: '4px 12px', borderRadius: '6px', background: '#d3b783', color: '#1a1a1a', fontSize: '10px', fontWeight: 'bold', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
                 {templateLabel}
               </div>
             </div>
 
-            <div className="h-[40%] px-6 py-4 text-[#f5efe4]">
-              <h2 className="text-[18px] leading-[1.24] font-semibold tracking-tight line-clamp-4">{displayTitle}</h2>
-              <p className="text-[11px] text-[#d8c9aa] mt-1 line-clamp-1">{templateSubLabel}</p>
-              <div className="w-full h-[1px] bg-[#d3b783]/45 mt-3 mb-3" />
-              <div className="rounded-xl border border-[#d3b783]/25 bg-[#1a1f2b] px-3 py-2">
-                <p className="text-[12px] leading-[1.4] text-[#f2ecdf] line-clamp-6">{displaySummary}</p>
+            <div style={{ height: '40%', padding: '16px 24px', color: '#f5efe4', boxSizing: 'border-box' }}>
+              <h2 style={{ fontSize: '18px', lineHeight: '1.24', fontWeight: '600', letterSpacing: '-0.02em', margin: '0', ...lineClamp(4) }}>{safeTitle}</h2>
+              <p style={{ fontSize: '11px', color: '#d8c9aa', margin: '4px 0 0 0', ...lineClamp(1) }}>{templateSubLabel}</p>
+              <div style={{ width: '100%', height: '1px', background: 'rgba(211,183,131,0.45)', margin: '12px 0' }} />
+              <div style={{ borderRadius: '12px', border: '1px solid rgba(211,183,131,0.25)', background: '#1a1f2b', padding: '8px 12px', boxSizing: 'border-box' }}>
+                <p style={{ fontSize: '12px', lineHeight: '1.4', color: '#f2ecdf', margin: '0', ...lineClamp(6) }}>{safeSummary}</p>
               </div>
             </div>
 
-            <div className="h-[6%] bg-gradient-to-r from-[#d3b783] to-[#f0ddba] text-[#1c1c1c] text-[10px] font-extrabold tracking-[0.14em] uppercase flex items-center px-6">
+            <div style={{ height: '6%', background: 'linear-gradient(to right, #d3b783, #f0ddba)', color: '#1c1c1c', fontSize: '10px', fontWeight: '800', letterSpacing: '0.14em', textTransform: 'uppercase', display: 'flex', alignItems: 'center', padding: '0 24px', boxSizing: 'border-box' }}>
               Premium Alert
             </div>
-            <div className="h-[6%] bg-[#0f1219] text-[10px] text-[#d0c3a8] flex items-center justify-between px-6 uppercase tracking-[0.08em]">
+            <div style={{ height: '6%', background: '#0f1219', fontSize: '10px', color: '#d0c3a8', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px', textTransform: 'uppercase', letterSpacing: '0.08em', boxSizing: 'border-box' }}>
               <span>{footerLeft}</span>
               <span>{footerRight}</span>
             </div>
@@ -436,27 +466,27 @@ export default function GeneratorPage() {
 
     if (selectedTemplateId === 'spotlight-focus') {
       return (
-        <div className="w-full h-full relative bg-[#05070d] p-5 overflow-hidden">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_22%,rgba(56,189,248,0.35),rgba(5,7,13,0.96)_45%)]" />
-          <div className="absolute inset-x-10 top-8 h-28 rounded-full bg-cyan-300/20 blur-3xl animate-pulse" />
-          <div className="relative w-full h-full rounded-[28px] border border-cyan-200/20 bg-[#0a0f1d] shadow-[0_25px_60px_rgba(0,0,0,0.55)] overflow-hidden flex flex-col">
-            <div className="relative h-[48%]">
+        <div style={{ width: '100%', height: '100%', position: 'relative', background: '#05070d', padding: '20px', overflow: 'hidden', boxSizing: 'border-box' }}>
+          <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(circle at 50% 22%, rgba(56,189,248,0.35), rgba(5,7,13,0.96) 45%)' }} />
+          <div style={{ position: 'absolute', left: '40px', right: '40px', top: '32px', height: '112px', borderRadius: '50%', background: 'rgba(103,232,249,0.2)', filter: 'blur(64px)' }} />
+          <div style={{ position: 'relative', width: '100%', height: '100%', borderRadius: '28px', border: '1px solid rgba(165,243,252,0.2)', background: '#0a0f1d', boxShadow: '0 25px 60px rgba(0,0,0,0.55)', overflow: 'hidden', display: 'flex', flexDirection: 'column', boxSizing: 'border-box' }}>
+            <div style={{ position: 'relative', height: '48%' }}>
               {imageNode}
-              <div className="absolute inset-0 bg-gradient-to-t from-[#0a0f1d]/65 to-transparent" />
-              <div className="absolute top-4 left-4 px-3 py-1 rounded-full bg-cyan-400 text-[#042634] text-[10px] font-extrabold tracking-[0.12em] uppercase">
+              <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top, rgba(10,15,29,0.65), transparent)' }} />
+              <div style={{ position: 'absolute', top: '16px', left: '16px', padding: '4px 12px', borderRadius: '9999px', background: '#22d3ee', color: '#042634', fontSize: '10px', fontWeight: '800', letterSpacing: '0.12em', textTransform: 'uppercase' }}>
                 {templateLabel}
               </div>
             </div>
-            <div className="h-[40%] px-5 py-4">
-              <h2 className="text-[20px] leading-[1.18] font-extrabold tracking-tight text-white line-clamp-4">{displayTitle}</h2>
-              <div className="mt-3 rounded-xl border border-cyan-300/30 bg-cyan-300/8 px-3 py-2">
-                <p className="text-[12px] leading-[1.4] text-cyan-50 line-clamp-6">{displaySummary}</p>
+            <div style={{ height: '40%', padding: '16px 20px', boxSizing: 'border-box' }}>
+              <h2 style={{ fontSize: '20px', lineHeight: '1.18', fontWeight: '800', letterSpacing: '-0.02em', color: '#ffffff', margin: '0', ...lineClamp(4) }}>{safeTitle}</h2>
+              <div style={{ marginTop: '12px', borderRadius: '12px', border: '1px solid rgba(103,232,249,0.3)', background: 'rgba(103,232,249,0.08)', padding: '8px 12px', boxSizing: 'border-box' }}>
+                <p style={{ fontSize: '12px', lineHeight: '1.4', color: '#ecfeff', margin: '0', ...lineClamp(6) }}>{safeSummary}</p>
               </div>
             </div>
-            <div className="h-[6%] bg-gradient-to-r from-cyan-400 to-blue-500 text-[#031923] text-[10px] font-black tracking-[0.16em] uppercase flex items-center px-5">
+            <div style={{ height: '6%', background: 'linear-gradient(to right, #22d3ee, #3b82f6)', color: '#031923', fontSize: '10px', fontWeight: '900', letterSpacing: '0.16em', textTransform: 'uppercase', display: 'flex', alignItems: 'center', padding: '0 20px', boxSizing: 'border-box' }}>
               Trending Now
             </div>
-            <div className="h-[6%] bg-[#070b16] text-[10px] text-cyan-100/80 flex items-center justify-between px-5 uppercase tracking-[0.08em]">
+            <div style={{ height: '6%', background: '#070b16', fontSize: '10px', color: 'rgba(207,250,254,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', textTransform: 'uppercase', letterSpacing: '0.08em', boxSizing: 'border-box' }}>
               <span>{footerLeft}</span>
               <span>{footerRight}</span>
             </div>
@@ -467,29 +497,29 @@ export default function GeneratorPage() {
 
     if (selectedTemplateId === 'cinematic-story-card') {
       return (
-        <div className="w-full h-full bg-[#07090f] p-4">
-          <div className="w-full h-full rounded-[28px] overflow-hidden relative shadow-[0_30px_70px_rgba(0,0,0,0.55)]">
-            <div className="absolute inset-0">
+        <div style={{ width: '100%', height: '100%', background: '#07090f', padding: '16px', boxSizing: 'border-box' }}>
+          <div style={{ width: '100%', height: '100%', borderRadius: '28px', overflow: 'hidden', position: 'relative', boxShadow: '0 30px 70px rgba(0,0,0,0.55)', boxSizing: 'border-box' }}>
+            <div style={{ position: 'absolute', inset: 0 }}>
               {imageNode}
             </div>
-            <div className="absolute inset-0 bg-gradient-to-t from-black via-black/55 to-transparent" />
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_78%_25%,rgba(251,191,36,0.25),transparent_42%)]" />
+            <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top, #000000, rgba(0,0,0,0.55), transparent)' }} />
+            <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(circle at 78% 25%, rgba(251,191,36,0.25), transparent 42%)' }} />
 
-              <div className="absolute top-4 left-4 px-3 py-1 rounded-md bg-white/18 backdrop-blur-md border border-white/30 text-white text-[10px] font-bold tracking-[0.11em] uppercase">
+            <div style={{ position: 'absolute', top: '16px', left: '16px', padding: '4px 12px', borderRadius: '6px', background: 'rgba(255,255,255,0.18)', backdropFilter: 'blur(12px)', border: '1px solid rgba(255,255,255,0.3)', color: '#ffffff', fontSize: '10px', fontWeight: 'bold', letterSpacing: '0.11em', textTransform: 'uppercase' }}>
               {templateLabel}
-              </div>
+            </div>
 
-            <div className="absolute left-5 right-5 top-[42%]">
-              <h2 className="text-[22px] leading-[1.12] font-extrabold text-white drop-shadow-[0_2px_10px_rgba(0,0,0,0.7)] line-clamp-4">
-                {displayTitle}
+            <div style={{ position: 'absolute', left: '20px', right: '20px', top: '42%' }}>
+              <h2 style={{ fontSize: '22px', lineHeight: '1.12', fontWeight: '800', color: '#ffffff', textShadow: '0 2px 10px rgba(0,0,0,0.7)', margin: '0', ...lineClamp(4) }}>
+                {safeTitle}
               </h2>
-              <div className="w-20 h-[3px] bg-amber-300 shadow-[0_0_12px_rgba(251,191,36,0.75)] mt-3 mb-3 rounded-full" />
-              <div className="rounded-2xl border border-white/25 bg-white/12 backdrop-blur-xl px-4 py-3">
-                <p className="text-[12px] leading-[1.4] text-white/95 line-clamp-6">{displaySummary}</p>
+              <div style={{ width: '80px', height: '3px', background: '#fcd34d', boxShadow: '0 0 12px rgba(251,191,36,0.75)', margin: '12px 0', borderRadius: '9999px' }} />
+              <div style={{ borderRadius: '16px', border: '1px solid rgba(255,255,255,0.25)', background: 'rgba(255,255,255,0.12)', backdropFilter: 'blur(24px)', padding: '12px 16px', boxSizing: 'border-box' }}>
+                <p style={{ fontSize: '12px', lineHeight: '1.4', color: 'rgba(255,255,255,0.95)', margin: '0', ...lineClamp(6) }}>{safeSummary}</p>
               </div>
             </div>
 
-            <div className="absolute left-0 right-0 bottom-0 h-[12%] bg-gradient-to-r from-amber-300/90 to-orange-300/90 text-[#1f1300] flex items-center justify-between px-5 text-[10px] font-extrabold uppercase tracking-[0.12em]">
+            <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: '12%', background: 'linear-gradient(to right, rgba(252,211,77,0.9), rgba(253,186,116,0.9))', color: '#1f1300', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', fontSize: '10px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.12em', boxSizing: 'border-box' }}>
               <span>{footerLeft}</span>
               <span>{footerRight}</span>
             </div>
@@ -499,12 +529,12 @@ export default function GeneratorPage() {
     }
 
     return (
-      <div className="w-full h-full rounded-[28px] overflow-hidden bg-[#0a0f1b] text-white flex flex-col">
-        <div className="relative h-[52%] bg-gray-800 rounded-[20px] m-4 mb-0 overflow-hidden">{imageNode}</div>
-        <div className="h-[48%] px-7 py-5 bg-[#060912] flex flex-col">
-          <h2 className="text-[16px] leading-[1.25] font-bold tracking-tight line-clamp-4">{displayTitle}</h2>
-          <div className="w-full h-[2px] bg-white/12 mt-4 mb-4" />
-          <p className="text-[12px] leading-[1.35] text-gray-100 line-clamp-6">{displaySummary}</p>
+      <div style={{ width: '100%', height: '100%', borderRadius: '28px', overflow: 'hidden', background: '#0a0f1b', color: '#ffffff', display: 'flex', flexDirection: 'column', boxSizing: 'border-box' }}>
+        <div style={{ position: 'relative', height: '52%', background: '#1f2937', borderRadius: '20px', margin: '16px 16px 0 16px', overflow: 'hidden' }}>{imageNode}</div>
+        <div style={{ height: '48%', padding: '20px 28px', background: '#060912', display: 'flex', flexDirection: 'column', boxSizing: 'border-box' }}>
+          <h2 style={{ fontSize: '16px', lineHeight: '1.25', fontWeight: 'bold', letterSpacing: '-0.02em', margin: '0', ...lineClamp(4) }}>{safeTitle}</h2>
+          <div style={{ width: '100%', height: '2px', background: 'rgba(255,255,255,0.12)', margin: '16px 0' }} />
+          <p style={{ fontSize: '12px', lineHeight: '1.35', color: '#f3f4f6', margin: '0', ...lineClamp(6) }}>{safeSummary}</p>
         </div>
       </div>
     );
@@ -567,11 +597,10 @@ export default function GeneratorPage() {
                         key={template.template_id}
                         type="button"
                         onClick={() => setSelectedTemplateId(template.template_id)}
-                        className={`text-left rounded-xl border px-3 py-2 transition-all ${
-                          isActive
-                            ? 'border-indigo-500 bg-indigo-50 text-indigo-900 dark:bg-indigo-950/40 dark:text-indigo-200'
-                            : 'border-gray-200 bg-white hover:bg-gray-50 text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800'
-                        }`}
+                        className={`text-left rounded-xl border px-3 py-2 transition-all ${isActive
+                          ? 'border-indigo-500 bg-indigo-50 text-indigo-900 dark:bg-indigo-950/40 dark:text-indigo-200'
+                          : 'border-gray-200 bg-white hover:bg-gray-50 text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800'
+                          }`}
                       >
                         <div className="text-sm font-semibold">{template.template_name}</div>
                         <div className="text-xs opacity-80">{template.design_style}</div>
@@ -591,8 +620,13 @@ export default function GeneratorPage() {
           </div>
 
           <div className="lg:col-span-7 flex flex-col">
-            <div className="bg-gray-200 dark:bg-gray-800 rounded-3xl overflow-hidden shadow-2xl flex-1 flex items-center justify-center relative aspect-square w-full max-w-lg mx-auto border-8 border-white dark:border-gray-900">
-              {renderTemplatePreview()}
+            <div id="capture-wrapper" style={{ padding: '32px', background: 'transparent' }} className="w-full flex justify-center">
+              <div
+                id="template-preview-container"
+                className="bg-gray-200 dark:bg-gray-800 rounded-3xl overflow-hidden shadow-2xl flex-1 flex items-center justify-center relative aspect-square w-full max-w-lg border-8 border-white dark:border-gray-900"
+              >
+                {renderTemplatePreview()}
+              </div>
             </div>
 
             <div className="mt-4 bg-white dark:bg-gray-800 p-4 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-sm max-w-lg mx-auto w-full text-sm">

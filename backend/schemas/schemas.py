@@ -51,3 +51,4 @@ class EmailRequest(BaseModel):
     description: Optional[str] = None
     template_used: Optional[str] = None
     template_html: Optional[str] = None
+    template_image_base64: Optional[str] = None

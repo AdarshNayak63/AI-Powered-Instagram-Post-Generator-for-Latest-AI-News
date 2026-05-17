@@ -174,6 +174,7 @@ def send_email(request: schemas.EmailRequest, db: Session = Depends(get_db)):
             request.description,
             request.template_used,
             request.template_html,
+            request.template_image_base64,
         )
         return {"message": "Email sending started", "task_id": task.id, "mode": "async", "recipient": recipient}
     except Exception as celery_error:
@@ -188,6 +189,7 @@ def send_email(request: schemas.EmailRequest, db: Session = Depends(get_db)):
                 request.description,
                 request.template_used,
                 request.template_html,
+                request.template_image_base64,
             )
             if result.get("status") == "success":
                 return {"message": "Email sent successfully", "mode": "sync", "result": result, "recipient": recipient}

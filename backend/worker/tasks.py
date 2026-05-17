@@ -58,6 +58,7 @@ def send_email_task(
     description: str = None,
     template_used: str = None,
     template_html: str = None,
+    template_image_base64: str = None,
 ):
     print(f"Sending email for post {post_id} to {email_to}...")
     db = SessionLocal()
@@ -94,6 +95,22 @@ Best regards,
 AI Tech News Generator
 """
 
+        # Base64 Inline Image
+        inline_image_html = ""
+        if template_image_base64:
+            inline_image_html = f"""
+            <div style="margin:0;padding:0;text-align:center;">
+              <img src="{template_image_base64}" alt="Template Preview" style="max-width:100%; height:auto; border-radius:16px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); display:block; margin: 0 auto;" />
+            </div>
+            <p style="text-align:center;font-size:12px;color:#6b7280;margin-top:12px;">See the attached PNG image if the preview doesn't load.</p>
+            """
+        else:
+            inline_image_html = f"""
+            <div style="margin:0;padding:0;">
+                {safe_template_html if safe_template_html else f"<div style='padding:14px;border-radius:10px;background:#f9fafb;border:1px solid #e5e7eb;'>No live template HTML was sent for template: {template_id}</div>"}
+            </div>
+            """
+
         html_body = f"""\
 <!doctype html>
 <html>
@@ -105,10 +122,8 @@ AI Tech News Generator
       <h3 style="margin:0 0 10px 0;font-size:18px;">Description / Caption</h3>
       <p style="margin:0 0 22px 0;white-space:pre-wrap;line-height:1.55;">{description_text}</p>
 
-      <h3 style="margin:0 0 10px 0;font-size:18px;">Selected Dynamic Template (Rendered HTML)</h3>
-      <div style="margin:0;padding:0;">
-        {safe_template_html if safe_template_html else f"<div style='padding:14px;border-radius:10px;background:#f9fafb;border:1px solid #e5e7eb;'>No live template HTML was sent for template: {template_id}</div>"}
-      </div>
+      <h3 style="margin:0 0 10px 0;font-size:18px;">Selected Dynamic Template Preview</h3>
+      {inline_image_html}
     </div>
   </body>
 </html>
@@ -116,8 +131,24 @@ AI Tech News Generator
         
         # Get image path
         image_path = None
-        if post.image_path:
-            # Convert relative path to absolute
+        temp_img_path = None
+        if template_image_base64 and template_image_base64.startswith("data:image"):
+            import base64
+            import tempfile
+            try:
+                # Extract the base64 part
+                header, encoded = template_image_base64.split(",", 1)
+                img_data = base64.b64decode(encoded)
+                # Create a temporary file to attach
+                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".png", prefix="template_preview_")
+                temp_file.write(img_data)
+                temp_file.close()
+                temp_img_path = temp_file.name
+                image_path = temp_img_path
+            except Exception as ex:
+                print(f"Error decoding template_image_base64: {ex}")
+        elif post.image_path:
+            # Fallback to post image if template image is not provided
             if post.image_path.startswith("static/"):
                 import os
                 backend_dir = os.path.dirname(os.path.dirname(__file__))
@@ -126,6 +157,14 @@ AI Tech News Generator
         # Send email
         from services.email import send_email_with_attachment
         success = send_email_with_attachment(email_to, subject, body, image_path, html_body=html_body)
+        
+        # Clean up temporary file if created
+        if temp_img_path:
+            try:
+                import os
+                os.unlink(temp_img_path)
+            except:
+                pass
         
         # Log the attempt
         log = models.Log(
